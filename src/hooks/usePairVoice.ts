@@ -5,10 +5,19 @@ import {
   fetchVoiceToken, buildWsUrl, arrayBufferToBase64,
   base64ToArrayBuffer, downsampleTo16k, float32ToInt16,
 } from "@/lib/voiceUtils";
+import { getSystemInstruction, ReviewMode, DEFAULT_MODE } from "@/config/reviewModes";
 
 export interface VoiceTranscript {
   role: "user" | "ai";
   text: string;
+}
+
+export interface PairSessionContext {
+  tree?: string;
+  goal?: string;
+  projectName?: string;
+  frameworks?: string[];
+  mode?: ReviewMode;
 }
 
 interface UsePairVoiceOptions {
@@ -20,7 +29,7 @@ export interface UsePairVoiceReturn {
   isRecording: boolean;
   isScreenSharing: boolean;
   isSpeaking: boolean;
-  startSession: () => Promise<void>;
+  startSession: (context?: PairSessionContext) => Promise<void>;
   stopSession: () => void;
   toggleMicrophone: () => void;
   startScreenShare: () => Promise<void>;
@@ -46,11 +55,28 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   const screenStreamRef = useRef<MediaStream | null>(null);
   const screenIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // ── Diagnostic counters ──
+  const audioChunkCountRef = useRef(0);
+  const frameCountRef = useRef(0);
+  const micChunkCountRef = useRef(0);
+
   // ── Audio Playback ──
 
   const playAudioChunk = (base64Audio: string) => {
-    if (!audioContextRef.current) return;
+    audioChunkCountRef.current++;
+    const chunkNum = audioChunkCountRef.current;
+
+    if (!audioContextRef.current) {
+      console.warn(`[Pair] ⚠️ Audio chunk #${chunkNum} SKIPPED — no AudioContext`);
+      return;
+    }
     const ctx = audioContextRef.current;
+
+    if (ctx.state === 'suspended') {
+      console.warn(`[Pair] ⚠️ AudioContext is SUSPENDED, attempting resume...`);
+      ctx.resume();
+    }
+
     const arrayBuffer = base64ToArrayBuffer(base64Audio);
     const int16Array = new Int16Array(arrayBuffer);
     const float32Array = new Float32Array(int16Array.length);
@@ -67,13 +93,16 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
       nextPlayTimeRef.current = currentTime;
     }
     source.start(nextPlayTimeRef.current);
-    nextPlayTimeRef.current += audioBuffer.duration;
+    const scheduledDuration = audioBuffer.duration;
+    nextPlayTimeRef.current += scheduledDuration;
+
+    console.log(`[Pair] 🔊 Audio chunk #${chunkNum} PLAYED — ${int16Array.length} samples, ${scheduledDuration.toFixed(3)}s duration, ctx.state=${ctx.state}`);
 
     setIsSpeaking(true);
     if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
     speakingTimerRef.current = setTimeout(() => {
       setIsSpeaking(false);
-    }, audioBuffer.duration * 1000 + 500);
+    }, scheduledDuration * 1000 + 500);
   };
 
   // ── Text Sending ──
@@ -120,8 +149,17 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
 
       // Capture frames at 1fps
       screenIntervalRef.current = setInterval(() => {
-        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-        if (video.videoWidth === 0) return;
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+          console.warn('[Pair] 📹 Frame skipped — WS not open');
+          return;
+        }
+        if (video.videoWidth === 0) {
+          console.warn('[Pair] 📹 Frame skipped — video not ready');
+          return;
+        }
+
+        frameCountRef.current++;
+        const frameNum = frameCountRef.current;
 
         const maxDim = 1024;
         const scale = Math.min(maxDim / video.videoWidth, maxDim / video.videoHeight, 1);
@@ -131,6 +169,8 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
 
         const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
         const base64Data = dataUrl.split(',')[1];
+
+        console.log(`[Pair] 📹 Frame #${frameNum} sent — ${canvas.width}x${canvas.height}, ${(base64Data.length / 1024).toFixed(0)}KB`);
 
         wsRef.current?.send(JSON.stringify({
           realtimeInput: {
@@ -184,7 +224,7 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
 
   // ── Start Session ──
 
-  const startSession = async () => {
+  const startSession = async (context?: PairSessionContext) => {
     // Clean up any existing connection first
     if (wsRef.current) {
       wsRef.current.onopen = null;
@@ -202,6 +242,8 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
       wsRef.current.onopen = (event) => {
         const ws = event.target as WebSocket;
         console.log("[Pair] WebSocket open, sending setup...");
+        const selectedMode = context?.mode || DEFAULT_MODE;
+        console.log(`[Pair] Mode: ${selectedMode}`);
         ws.send(JSON.stringify({
           setup: {
             model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
@@ -211,14 +253,17 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
                 voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
               }
             },
+            systemInstruction: {
+              parts: [{ text: getSystemInstruction(selectedMode) }],
+            },
             inputAudioTranscription: {},
             outputAudioTranscription: {},
             proactivity: { proactiveAudio: true },
             realtimeInputConfig: {
               automaticActivityDetection: {
                 disabled: false,
-                startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
-                endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+                startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+                endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
               },
             },
           }
@@ -248,15 +293,31 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
             const inputData = downsampleTo16k(e.inputBuffer.getChannelData(0), nativeSampleRate);
             const pcm16 = float32ToInt16(inputData);
             const base64Audio = arrayBufferToBase64(pcm16.buffer as ArrayBuffer);
+            micChunkCountRef.current++;
+            // Log every 50th mic chunk to avoid spam
+            if (micChunkCountRef.current % 50 === 0) {
+              console.log(`[Pair] 🎤 Mic chunk #${micChunkCountRef.current} sent — ${pcm16.length} samples`);
+            }
             wsRef.current?.send(JSON.stringify({
               realtimeInput: { audio: { data: base64Audio, mimeType: "audio/pcm;rate=16000" } }
             }));
           };
 
-          // Start conversation like a senior engineer teammate
+          // Build context-aware greeting
+          let greetingPrompt = "";
+          if (context?.tree && context?.goal) {
+            greetingPrompt = `[SESSION_CONTEXT]\nProject: ${context.projectName || "Unknown"}\nFrameworks: ${context.frameworks?.join(", ") || "Unknown"}\n\nProject structure:\n${context.tree}\n\nDeveloper's current task: ${context.goal}\n\nYou now know the project structure and what they're working on. Start the session by acknowledging the project (mention the framework and structure briefly), then ask a specific question about their current task. Be warm and curious. One short paragraph.`;
+          } else if (context?.tree) {
+            greetingPrompt = `[SESSION_CONTEXT]\nProject: ${context.projectName || "Unknown"}\nFrameworks: ${context.frameworks?.join(", ") || "Unknown"}\n\nProject structure:\n${context.tree}\n\nStart the session by commenting on the project structure you see. Ask what they're currently working on. Be warm and curious. One short paragraph.`;
+          } else if (context?.goal) {
+            greetingPrompt = `[SESSION_CONTEXT]\nDeveloper's current task: ${context.goal}\n\nStart the session by acknowledging what they're working on. Suggest they share their screen so you can see the code. Be warm and curious. One short paragraph.`;
+          } else {
+            greetingPrompt = `Start our pair programming session. Greet me casually like a senior developer colleague who just sat down next to me. Ask what I'm building, what the codebase is about, and suggest I share my screen so you can take a look at the code together. Be warm and genuinely curious. One short paragraph max.`;
+          }
+
           wsRef.current?.send(JSON.stringify({
             clientContent: {
-              turns: [{ role: "user", parts: [{ text: "Hey! Start our pair programming session. Greet me casually like a senior developer colleague who just sat down next to me. Ask what I'm building, what the codebase is about, and suggest I share my screen so you can take a look at the code together. Be warm and genuinely curious. One short paragraph max." }] }],
+              turns: [{ role: "user", parts: [{ text: greetingPrompt }] }],
               turnComplete: true,
             }
           }));
@@ -268,10 +329,31 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
       };
 
       // ── Message handler ──
+      let wsMessageCount = 0;
       wsRef.current.onmessage = async (event) => {
         try {
+          wsMessageCount++;
           const rawData = event.data instanceof Blob ? await event.data.text() : event.data;
           const data = JSON.parse(rawData);
+
+          // Classify the message type for logging
+          const msgTypes: string[] = [];
+          if (data.setupComplete) msgTypes.push('setupComplete');
+          if (data.error) msgTypes.push('ERROR');
+          if (data.serverContent?.turnComplete) msgTypes.push('turnComplete');
+          if (data.serverContent?.interrupted) msgTypes.push('interrupted');
+          if (data.serverContent?.modelTurn?.parts) {
+            const partTypes = data.serverContent.modelTurn.parts.map(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (p: any) => p.inlineData ? `audio(${p.inlineData.mimeType})` : p.text ? 'text' : 'unknown'
+            );
+            msgTypes.push(`modelTurn[${partTypes.join(',')}]`);
+          }
+          if (data.serverContent?.outputTranscription) msgTypes.push('outputTranscription');
+          if (data.serverContent?.inputTranscription) msgTypes.push('inputTranscription');
+          if (msgTypes.length === 0) msgTypes.push('other');
+
+          console.log(`[Pair] 📨 WS msg #${wsMessageCount}: ${msgTypes.join(' + ')}`);
 
           if (data.setupComplete) {
             console.log("[Pair] ✅ Setup complete, starting mic...");
@@ -288,20 +370,29 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
 
           // Turn complete
           if (data.serverContent?.turnComplete) {
-            console.log("[Pair] 🔄 Turn complete");
+            console.log(`[Pair] 🔄 Turn complete — total audio chunks played so far: ${audioChunkCountRef.current}`);
           }
 
           // Interrupted (user spoke while AI was talking)
           if (data.serverContent?.interrupted) {
-            console.log("[Pair] 🗣️ Interrupted by user");
+            console.warn(`[Pair] 🗣️ INTERRUPTED — the model was cut off. Audio chunks so far: ${audioChunkCountRef.current}, mic chunks: ${micChunkCountRef.current}, video frames: ${frameCountRef.current}`);
           }
 
           // Audio chunks
           if (data.serverContent?.modelTurn?.parts) {
+            let audioPartsCount = 0;
+            let nonAudioParts = 0;
             for (const part of data.serverContent.modelTurn.parts) {
               if (part.inlineData?.mimeType?.startsWith("audio/pcm")) {
+                audioPartsCount++;
                 playAudioChunk(part.inlineData.data);
+              } else {
+                nonAudioParts++;
+                console.log('[Pair] 📦 Non-audio part in modelTurn:', JSON.stringify(part).slice(0, 200));
               }
+            }
+            if (audioPartsCount === 0) {
+              console.warn(`[Pair] ⚠️ modelTurn had ${nonAudioParts} parts but ZERO audio parts`);
             }
           }
 
@@ -317,6 +408,13 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
             const text = data.serverContent.inputTranscription.text;
             console.log("[Pair] 👤 User:", text);
             optionsRef.current.onTranscript?.({ role: "user", text });
+          }
+
+          // Log any unhandled top-level keys
+          const knownKeys = new Set(['setupComplete', 'error', 'serverContent']);
+          const unknownKeys = Object.keys(data).filter(k => !knownKeys.has(k));
+          if (unknownKeys.length > 0) {
+            console.warn('[Pair] ⚠️ Unknown WS message keys:', unknownKeys, JSON.stringify(data).slice(0, 300));
           }
         } catch (e) {
           console.error("[Pair] Failed to parse WS message", e);
