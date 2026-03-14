@@ -1,0 +1,135 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ==========================================
+// NextAuth.js Required Models
+// ==========================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ==========================================
+// App Models
+// ==========================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  // User profile
+  skills        String?   // JSON array: ["react", "nodejs", "typescript"]
+  tier          String    @default("free")  // free | pro | team
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  trainingSessions TrainingSession[]
+  progress      UserProgress[]
+}
+
+model TrainingSession {
+  id            String   @id @default(cuid())
+  userId        String
+  
+  // Session metadata
+  duration      Int      @default(0)   // seconds
+  status        String   @default("active") // active | completed | cancelled
+  
+  // Training data
+  rounds        String?  // JSON: array of round results
+  score         Int?     // overall score 0-100
+  feedback      String?  // AI-generated session summary
+  
+  createdAt     DateTime @default(now())
+  completedAt   DateTime?
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roundDetails  SessionRound[]
+}
+
+model SessionRound {
+  id                String   @id @default(cuid())
+  sessionId         String
+  roundNumber       Int
+  
+  // Bug shown
+  bugId             String   // reference to bug in our database
+  bugCategory       String   // hooks, async, security, etc.
+  bugFramework      String   // react, nodejs, python, etc.
+  
+  // User response
+  userIdentifiedBug Boolean  @default(false)
+  userExplanation   String?  // what the user said
+  hintsUsed         Int      @default(0)
+  timeTaken         Int      @default(0) // seconds
+  
+  // AI evaluation
+  score             Int?     // 0-100 for this round
+  aiEvaluation      String?  // AI's assessment
+  
+  createdAt         DateTime @default(now())
+
+  session           TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model UserProgress {
+  id            String   @id @default(cuid())
+  userId        String
+  
+  // Skill tracking
+  category      String   // hooks, async, security, etc.
+  framework     String   // react, nodejs, python, etc.
+  level         Int      @default(1)  // 1-5 skill level
+  totalAttempts Int      @default(0)
+  correctCount  Int      @default(0)
+  
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category, framework])
+}
