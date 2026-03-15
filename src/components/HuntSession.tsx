@@ -37,6 +37,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const [showSolvedBanner, setShowSolvedBanner] = useState(false);
   const [autoLoadNext, setAutoLoadNext] = useState(false);
   const [started, setStarted] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
   const conversationRef = useRef<HTMLDivElement>(null);
   const codeUpdateTimerRef = useRef<NodeJS.Timeout | null>(null);
   const seenBugIds = useRef<string[]>([]);
@@ -69,7 +70,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const {
     isConnected, isRecording, isSpeaking,
     startSession, stopSession, toggleMicrophone,
-    sendText, sendCodeUpdate,
+    sendText, sendCodeUpdate, postSessionReport
   } = useHuntVoice({
     onTranscript: handleTranscript,
     onBugSolved: handleBugSolved,
@@ -122,7 +123,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const handleEnd = () => {
     stopSession();
     if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
-    onEnd();
+    setShowSummary(true);
   };
 
   const startHuntSession = async () => {
@@ -201,6 +202,73 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
       <div className={styles.setupScreen}>
         <div className={styles.setupCard}>
           <h1 className={styles.setupTitle}>🔍 Finding a bug...</h1>
+        </div>
+      </div>
+    );
+  }
+
+  if (showSummary) {
+    let summaryData = null;
+    if (postSessionReport) {
+      try {
+        // the ADK returns results which contains an array, the last event is agent_response
+        // We look for 'content' in the object, or assume the report might be raw json text
+        const rawText = postSessionReport.results?.[postSessionReport.results.length - 1]?.content || JSON.stringify(postSessionReport);
+        // Clean markdown backticks if any
+        const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+        summaryData = JSON.parse(cleaned);
+      } catch (e) {
+        console.error("Failed to parse ADK summary", e);
+        // Fallback or rough parse
+        summaryData = null;
+      }
+    }
+
+    return (
+      <div className={styles.setupScreen}>
+        <div className={styles.setupCard} style={{ maxWidth: '600px', width: '100%' }}>
+          <h1 className={styles.setupTitle}>📊 Post-Session AI Summary</h1>
+          
+          {!postSessionReport ? (
+            <div style={{ textAlign: 'center', padding: '40px' }}>
+              <div className={styles.loadingPulse} style={{ fontSize: '3rem', marginBottom: '1rem' }}>🤖</div>
+              <p className={styles.setupSubtitle}>Google ADK is analyzing your session...</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '20px' }}>
+              {summaryData?.bugsDetected?.length > 0 && (
+                <div style={{ background: 'rgba(34, 197, 94, 0.1)', borderLeft: '4px solid #22c55e', padding: '16px', borderRadius: '4px' }}>
+                  <h3 style={{ color: '#22c55e', margin: '0 0 10px 0', fontSize: '18px' }}>✅ Bugs You Found</h3>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#fff', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {summaryData.bugsDetected.map((bug: string, i: number) => <li key={i}>{bug}</li>)}
+                  </ul>
+                </div>
+              )}
+              
+              {summaryData?.improvedAreas?.length > 0 && (
+                <div style={{ background: 'rgba(56, 189, 248, 0.1)', borderLeft: '4px solid #38bdf8', padding: '16px', borderRadius: '4px' }}>
+                  <h3 style={{ color: '#38bdf8', margin: '0 0 10px 0', fontSize: '18px' }}>📈 Areas for Improvement</h3>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#fff', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {summaryData.improvedAreas.map((area: string, i: number) => <li key={i}>{area}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {!summaryData?.bugsDetected && !summaryData?.improvedAreas && (
+                <div style={{ padding: '20px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                  <p style={{ margin: 0, color: '#aaa', fontSize: '14px', whiteSpace: 'pre-wrap' }}>
+                    {JSON.stringify(postSessionReport, null, 2)}
+                  </p>
+                </div>
+              )}
+
+              <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center' }}>
+                <button className={styles.endSessionBtn} onClick={onEnd} style={{ minWidth: '200px', fontSize: '16px', padding: '12px' }}>
+                  Back to Menu
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

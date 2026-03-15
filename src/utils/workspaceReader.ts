@@ -28,6 +28,12 @@ export interface WorkspaceResult {
   tree: string;
   projectName: string;
   frameworks: string[];
+  dirHandle: FileSystemDirectoryHandle;
+}
+
+export interface FileReadResult {
+  content: string | null;
+  error: string | null;
 }
 
 // ── Feature detection ──
@@ -228,5 +234,54 @@ export async function pickAndReadWorkspace(): Promise<WorkspaceResult> {
     tree: `${projectName}/\n${tree}`,
     projectName,
     frameworks,
+    dirHandle,
   };
+}
+
+/**
+ * Reads a single file from a stored directory handle.
+ * Used by the AI's readFile tool to get exact file contents.
+ * 
+ * @param dirHandle - The workspace directory handle from pickAndReadWorkspace
+ * @param relativePath - Path relative to workspace root, e.g. "src/hooks/usePairVoice.ts"
+ * @returns FileReadResult with content or error
+ */
+const MAX_FILE_SIZE = 100 * 1024; // 100KB limit
+
+export async function readFileFromHandle(
+  dirHandle: FileSystemDirectoryHandle,
+  relativePath: string
+): Promise<FileReadResult> {
+  try {
+    // Security: block sensitive files
+    if (isBlockedFile(relativePath)) {
+      return { content: null, error: "This file is blocked for security reasons." };
+    }
+
+    // Navigate to the file through the directory structure
+    const parts = relativePath.split("/").filter(Boolean);
+    let currentDir = dirHandle;
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      currentDir = await currentDir.getDirectoryHandle(parts[i]);
+    }
+
+    const fileName = parts[parts.length - 1];
+    const fileHandle = await currentDir.getFileHandle(fileName);
+    const file = await fileHandle.getFile();
+
+    // Size check
+    if (file.size > MAX_FILE_SIZE) {
+      return {
+        content: null,
+        error: `File is too large (${(file.size / 1024).toFixed(0)}KB). Maximum is ${MAX_FILE_SIZE / 1024}KB.`,
+      };
+    }
+
+    const content = await file.text();
+    return { content, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return { content: null, error: `Could not read file "${relativePath}": ${message}` };
+  }
 }

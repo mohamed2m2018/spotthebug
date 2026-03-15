@@ -4,64 +4,42 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { usePairVoice, VoiceTranscript, PairSessionContext } from "@/hooks/usePairVoice";
 import BugAvatar from "@/components/BugAvatar";
 import { isDirectoryPickerSupported, pickAndReadWorkspace, WorkspaceResult } from "@/utils/workspaceReader";
-import { ReviewMode, REVIEW_MODES, DEFAULT_MODE } from "@/config/reviewModes";
+import { isGitRepo, getChangedFiles, GitChangedFile } from "@/utils/gitDiff";
+import type { ReviewFinding } from "@/config/prompts";
+import * as traceClient from "@/lib/traceClient";
 import styles from "@/app/session/session.module.css";
-
-// ── Types ──
 
 interface Message {
   role: "ai" | "user";
   text: string;
 }
 
-interface RecentProject {
-  path: string;
-  projectName: string;
-  goal: string;
-  frameworks: string[];
-  lastUsed: number;
-  cachedTree?: string;
-}
-
 interface PairSessionProps {
   onEnd: () => void;
-}
-
-// ── localStorage helpers ──
-
-const RECENT_PROJECTS_KEY = "spotthebug_recent_projects";
-
-function loadRecentProjects(): RecentProject[] {
-  try {
-    const data = localStorage.getItem(RECENT_PROJECTS_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRecentProject(project: RecentProject) {
-  const projects = loadRecentProjects().filter((p) => p.path !== project.path);
-  projects.unshift({ ...project, lastUsed: Date.now() });
-  localStorage.setItem(
-    RECENT_PROJECTS_KEY,
-    JSON.stringify(projects.slice(0, 5))
-  );
 }
 
 // ── Component ──
 
 export default function PairSession({ onEnd }: PairSessionProps) {
   // Setup state
-  const [phase, setPhase] = useState<"setup" | "active">("setup");
-  const [workspacePath, setWorkspacePath] = useState("");
+  const [phase, setPhase] = useState<"setup" | "active" | "ended">("setup");
   const [sessionGoal, setSessionGoal] = useState("");
-  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [isLoadingTree, setIsLoadingTree] = useState(false);
   const [treeError, setTreeError] = useState("");
   const [pickedWorkspace, setPickedWorkspace] = useState<WorkspaceResult | null>(null);
   const [supportsDirectoryPicker, setSupportsDirectoryPicker] = useState(false);
-  const [selectedMode, setSelectedMode] = useState<ReviewMode>(DEFAULT_MODE);
+  const [readingFile, setReadingFile] = useState<string | null>(null);
+
+  // Git diff & review state
+  const [changedFiles, setChangedFiles] = useState<GitChangedFile[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const [isDetectingGit, setIsDetectingGit] = useState(false);
+  const [gitProgress, setGitProgress] = useState('');
+  const [hasGit, setHasGit] = useState(false);
+  const [reviewFindings, setReviewFindings] = useState<ReviewFinding[] | null>(null);
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [reviewProgress, setReviewProgress] = useState('');
+  const [reviewTool, setReviewTool] = useState<string>("");
 
   // Active session state
   const [messages, setMessages] = useState<Message[]>([]);
@@ -72,30 +50,46 @@ export default function PairSession({ onEnd }: PairSessionProps) {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const pipWindowRef = useRef<Window | null>(null);
 
-  const handleTranscript = useCallback((transcript: VoiceTranscript) => {
-    const cleanText = transcript.text.trim();
-    if (!cleanText) return;
-    setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (last && last.role === transcript.role) {
-        return [
-          ...prev.slice(0, -1),
-          { ...last, text: last.text + " " + cleanText },
-        ];
-      }
-      return [...prev, { role: transcript.role, text: cleanText }];
-    });
+  // Transcript callback — no-op since we don't display transcripts in the UI.
+  // The native-audio model's text output is internal reasoning (thinking text),
+  // not the actual spoken content. Showing it would confuse users.
+  const handleTranscript = useCallback((_transcript: VoiceTranscript) => {
+    // Intentionally not added to messages — UI shouldn't show AI thinking text
+  }, []);
+
+  // Use ref to break circular dependency: handleScreenShareEnd needs stopSession,
+  // but stopSession comes from usePairVoice which takes handleScreenShareEnd as option
+  const stopSessionRef = useRef<(() => void) | null>(null);
+
+  const handleScreenShareEnd = useCallback(() => {
+    stopSessionRef.current?.();
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (pipWindowRef.current) pipWindowRef.current.close();
+    setPhase("ended");
+  }, []);
+
+  const handleFileRead = useCallback((filePath: string) => {
+    setReadingFile(filePath);
+    setMessages((prev) => [...prev, { role: "ai", text: `📖 Reading ${filePath}...` }]);
+    // Clear after 3 seconds
+    setTimeout(() => setReadingFile(null), 3000);
   }, []);
 
   const {
     isConnected, isRecording, isScreenSharing, isSpeaking,
     startSession, stopSession, toggleMicrophone,
     startScreenShare, stopScreenShare, sendText,
-  } = usePairVoice({ onTranscript: handleTranscript });
+  } = usePairVoice({
+    onTranscript: handleTranscript,
+    onScreenShareEnd: handleScreenShareEnd,
+    onFileRead: handleFileRead,
+  });
 
-  // Load recent projects + check directory picker support on mount
+  // Populate ref after hook runs
+  stopSessionRef.current = stopSession;
+
+  // Check directory picker support on mount
   useEffect(() => {
-    setRecentProjects(loadRecentProjects());
     setSupportsDirectoryPicker(isDirectoryPickerSupported());
   }, []);
 
@@ -124,32 +118,6 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     };
   }, []);
 
-  // ── Fetch workspace tree (server-side fallback) ──
-  const fetchWorkspaceTree = async (
-    path: string
-  ): Promise<WorkspaceResult | null> => {
-    setIsLoadingTree(true);
-    setTreeError("");
-    try {
-      const res = await fetch("/api/workspace", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setTreeError(data.error || "Failed to read workspace");
-        return null;
-      }
-      return { tree: data.tree, projectName: data.projectName, frameworks: data.frameworks };
-    } catch {
-      setTreeError("Network error");
-      return null;
-    } finally {
-      setIsLoadingTree(false);
-    }
-  };
-
   // ── Pick folder (client-side, Chromium only) ──
   const handlePickFolder = async () => {
     setIsLoadingTree(true);
@@ -157,7 +125,29 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     try {
       const result = await pickAndReadWorkspace();
       setPickedWorkspace(result);
-      setWorkspacePath(""); // Clear text input since we're using picker
+
+      // Auto-detect git changes
+      setIsDetectingGit(true);
+      try {
+        const isGit = await isGitRepo(result.dirHandle);
+        console.log('[Pair] isGitRepo:', isGit);
+        setHasGit(isGit);
+        if (isGit) {
+          const files = await getChangedFiles(result.dirHandle, setGitProgress);
+          console.log('[Pair] Changed files found:', files.length, files.map(f => `${f.status} ${f.filePath}`));
+          setChangedFiles(files);
+          // Auto-select all changed files
+          setSelectedFiles(files.map(f => f.filePath));
+          if (files.length === 0) {
+            console.log('[Pair] Git repo detected but no uncommitted changes');
+          }
+        }
+      } catch (gitErr) {
+        console.error("[Pair] Git detection failed:", gitErr);
+        setTreeError(`⚠️ Could not scan git changes: ${gitErr instanceof Error ? gitErr.message : 'Unknown error'}. You can still start the session without code analysis.`);
+      } finally {
+        setIsDetectingGit(false);
+      }
     } catch (err) {
       // User cancelled the picker — not an error
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -170,101 +160,151 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     }
   };
 
-  // ── Start pairing ──
-  const startPairing = async (context?: PairSessionContext) => {
-    setPhase("active");
-    setMessages([
-      {
-        role: "ai",
-        text: "🎙️ Connecting to AI pair programmer...",
-      },
-    ]);
+  // ── Run code review ──
+  const handleRunReview = async () => {
+    if (selectedFiles.length === 0 || !pickedWorkspace) return;
+    setIsReviewing(true);
+    setTreeError("");
+
+    const reviewTraceId = traceClient.generateSessionId();
+    traceClient.startTrace(reviewTraceId, "pair", {
+      phase: 'codeReview',
+      filesCount: selectedFiles.length,
+      projectName: pickedWorkspace.projectName,
+    });
+    traceClient.traceEvent(reviewTraceId, 'codeReview.start', {
+      input: { selectedFiles, goal: sessionGoal.trim() || undefined },
+    });
+
+    // Start progress before the try so it's accessible in finally
+    let progressInterval: ReturnType<typeof setInterval> | undefined;
 
     try {
-      await startSession(context);
-      setMessages([
-        {
-          role: "ai",
-          text: "🎙️ Connected! Listening... Share your screen when ready.",
+      const filesToReview = changedFiles
+        .filter(f => selectedFiles.includes(f.filePath) && f.content)
+        .map(f => ({
+          path: f.filePath,
+          content: f.content!,
+          originalContent: f.originalContent || undefined,
+          language: f.filePath.split('.').pop() || 'text',
+        }));
+
+      // Cycle progress messages while the API call is pending
+      const progressMessages = [
+        '🔍 Sending code for review...',
+        '🌐 Searching best practices & documentation...',
+        '📋 Analyzing code patterns...',
+        '🔎 Cross-referencing with industry standards...',
+        '📝 Structuring review findings...',
+      ];
+      let msgIndex = 0;
+      setReviewProgress(progressMessages[0]);
+      progressInterval = setInterval(() => {
+        msgIndex++;
+        if (msgIndex < progressMessages.length) {
+          setReviewProgress(progressMessages[msgIndex]);
+        }
+      }, 4000);
+
+      const res = await fetch('/api/review-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: filesToReview, goal: sessionGoal.trim() || undefined }),
+      });
+
+      if (!res.ok) throw new Error('Review API failed');
+      const data = await res.json();
+      setReviewFindings(data.findings || []);
+      setReviewTool(data.tool || 'unknown');
+
+      traceClient.traceEvent(reviewTraceId, 'codeReview.complete', {
+        output: {
+          findingsCount: (data.findings || []).length,
+          riskScore: data.riskScore,
+          summary: data.summary,
+          tool: data.tool,
         },
-      ]);
+      });
+    } catch (err) {
+      console.error("[Pair] Code review failed:", err);
+      setTreeError("Code review failed. You can still start the session without it.");
+      setReviewFindings([]);
+
+      traceClient.traceEvent(reviewTraceId, 'codeReview.error', {
+        metadata: { error: String(err) },
+      });
+    } finally {
+      if (progressInterval) clearInterval(progressInterval);
+      setReviewProgress('');
+      setIsReviewing(false);
+      traceClient.endTrace(reviewTraceId);
+    }
+  };
+
+  // ── Toggle file selection ──
+  const toggleFileSelection = (filePath: string) => {
+    setSelectedFiles(prev =>
+      prev.includes(filePath)
+        ? prev.filter(f => f !== filePath)
+        : [...prev, filePath]
+    );
+    // Reset review if file selection changes
+    setReviewFindings(null);
+  };
+
+  // ── Start pairing ──
+  const startPairing = async (context: PairSessionContext) => {
+    // Step 1: Get screen share FIRST — mandatory
+    let screenStream: MediaStream;
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 1 },
+        audio: false,
+      });
+    } catch {
+      // User cancelled the screen share dialog
+      setTreeError("🖥️ Screen sharing is required for pair programming. Please share your screen to start.");
+      return;
+    }
+
+    // Step 2: Screen share granted — now connect
+    setPhase("active");
+    setMessages([{ role: "ai", text: "🎤 Connecting..." }]);
+
+    try {
+      await startSession({ ...context, screenStream });
+      // Don't show "Connected" message — let the AI's first audio response
+      // (after seeing the screen) naturally confirm the connection
     } catch (error) {
       console.error("Failed to start pair:", error);
+      screenStream.getTracks().forEach(t => t.stop());
       setMessages([{ role: "ai", text: "Failed to connect. Try again." }]);
     }
   };
 
-  // ── Handle new project start ──
+  // ── Handle project start ──
   const handleNewProjectStart = async () => {
-    let context: PairSessionContext = {};
-
-    // Use picked workspace (client-side) if available, otherwise fall back to text input (server-side)
-    if (pickedWorkspace) {
-      context.tree = pickedWorkspace.tree;
-      context.projectName = pickedWorkspace.projectName;
-      context.frameworks = pickedWorkspace.frameworks;
-
-      saveRecentProject({
-        path: `picker://${pickedWorkspace.projectName}`,
-        projectName: pickedWorkspace.projectName,
-        goal: sessionGoal.trim(),
-        frameworks: pickedWorkspace.frameworks,
-        cachedTree: pickedWorkspace.tree,
-        lastUsed: Date.now(),
-      });
-    } else if (workspacePath.trim()) {
-      const result = await fetchWorkspaceTree(workspacePath.trim());
-      if (result) {
-        context.tree = result.tree;
-        context.projectName = result.projectName;
-        context.frameworks = result.frameworks;
-
-        saveRecentProject({
-          path: workspacePath.trim(),
-          projectName: result.projectName,
-          goal: sessionGoal.trim(),
-          frameworks: result.frameworks,
-          cachedTree: result.tree,
-          lastUsed: Date.now(),
-        });
-      } else {
-        console.warn("[Pair] Workspace tree failed, continuing without it");
-      }
+    if (!pickedWorkspace) {
+      setTreeError("Please pick a workspace folder first.");
+      return;
     }
+
+    const context: PairSessionContext = {
+      tree: pickedWorkspace.tree,
+      projectName: pickedWorkspace.projectName,
+      frameworks: pickedWorkspace.frameworks,
+      dirHandle: pickedWorkspace.dirHandle,
+    };
 
     if (sessionGoal.trim()) {
       context.goal = sessionGoal.trim();
     }
 
-    context.mode = selectedMode;
-
-    startPairing(Object.keys(context).length > 0 ? context : undefined);
-  };
-
-  // ── Continue recent project ──
-  const handleContinueProject = async (project: RecentProject) => {
-    setSessionGoal(project.goal);
-
-    const context: PairSessionContext = {
-      goal: project.goal || undefined,
-      projectName: project.projectName,
-      frameworks: project.frameworks,
-      mode: selectedMode,
-    };
-
-    // Use cached tree if available (from picker flow), otherwise fetch from server
-    if (project.cachedTree) {
-      context.tree = project.cachedTree;
-    } else if (!project.path.startsWith("picker://")) {
-      setWorkspacePath(project.path);
-      const result = await fetchWorkspaceTree(project.path);
-      if (result) {
-        context.tree = result.tree;
-      }
+    // Inject review findings if available
+    if (reviewFindings && selectedFiles.length > 0) {
+      context.reviewFindings = reviewFindings;
+      context.selectedFiles = selectedFiles;
     }
-
-    // Update last used
-    saveRecentProject(project);
 
     startPairing(context);
   };
@@ -298,7 +338,6 @@ export default function PairSession({ onEnd }: PairSessionProps) {
           button { padding: 8px 14px; border-radius: 8px; border: none; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
           .mic { background: #4ade80; color: #000; }
           .mic.muted { background: #374151; color: #9ca3af; }
-          .review { background: #8b5cf6; color: #fff; }
           .end { background: #ef4444; color: #fff; }
         </style>
         <div class="header">
@@ -311,7 +350,6 @@ export default function PairSession({ onEnd }: PairSessionProps) {
         </div>
         <div class="controls">
           <button class="mic" id="pip-mic">🎤 Mute</button>
-          <button class="review" id="pip-review">👀 Review</button>
           <button class="end" id="pip-end">⏹ End</button>
         </div>
       `;
@@ -352,7 +390,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     stopSession();
     if (timerRef.current) clearInterval(timerRef.current);
     if (pipWindowRef.current) pipWindowRef.current.close();
-    onEnd();
+    setPhase("ended");
   };
 
   const sendMessage = () => {
@@ -379,59 +417,12 @@ export default function PairSession({ onEnd }: PairSessionProps) {
             Set up your session for focused, structured code review
           </p>
 
-          {/* Recent Projects */}
-          {recentProjects.length > 0 && (
-            <div className={styles.recentSection}>
-              <h3 className={styles.recentTitle}>Recent Projects</h3>
-              <div className={styles.recentGrid}>
-                {recentProjects.map((project) => (
-                  <div key={project.path} className={styles.recentCard}>
-                    <div className={styles.recentCardHeader}>
-                      <span className={styles.recentCardName}>
-                        📁 {project.projectName}
-                      </span>
-                      {project.frameworks.length > 0 && (
-                        <span className={styles.recentCardFramework}>
-                          {project.frameworks[0]}
-                        </span>
-                      )}
-                    </div>
-                    {project.goal && (
-                      <p className={styles.recentCardGoal}>{project.goal}</p>
-                    )}
-                    <div className={styles.recentCardActions}>
-                      <button
-                        className={styles.continueBtn}
-                        onClick={() => handleContinueProject(project)}
-                      >
-                        ▶ Continue
-                      </button>
-                      <button
-                        className={styles.editBtn}
-                        onClick={() => {
-                          setWorkspacePath(project.path);
-                          setSessionGoal(project.goal);
-                        }}
-                      >
-                        ✏️ Edit
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* New Project Setup */}
+          {/* Workspace Setup */}
           <div className={styles.newProjectSection}>
-            {recentProjects.length > 0 && (
-              <h3 className={styles.recentTitle}>New Project</h3>
-            )}
 
             <div className={styles.formGroup}>
               <label className={styles.formLabel}>
-                Workspace{" "}
-                <span className={styles.formOptional}>(optional)</span>
+                Workspace
               </label>
 
               {pickedWorkspace ? (
@@ -470,17 +461,12 @@ export default function PairSession({ onEnd }: PairSessionProps) {
                   {isLoadingTree ? "Reading folder..." : "📂 Pick Folder"}
                 </button>
               ) : (
-                /* ── Fallback text input (Firefox/Safari) ── */
-                <input
-                  className={styles.formInput}
-                  placeholder="/Users/you/your-project"
-                  value={workspacePath}
-                  onChange={(e) => setWorkspacePath(e.target.value)}
-                />
+                <p className={styles.formHint}>
+                  ⚠️ Your browser doesn&apos;t support folder picking. Please use Chrome or Edge.
+                </p>
               )}
               <span className={styles.formHint}>
-                Reads your file tree for context. Secrets (.env, keys) are never
-                read.
+                Required. Gives the AI access to read your files accurately.
               </span>
             </div>
 
@@ -504,38 +490,304 @@ export default function PairSession({ onEnd }: PairSessionProps) {
               <div className={styles.treeError}>⚠️ {treeError}</div>
             )}
 
-            {/* Mode Selector */}
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Review Mode</label>
-              <div className={styles.modeSelector}>
-                {Object.values(REVIEW_MODES).map((mode) => (
+            {/* Git Changed Files */}
+            {pickedWorkspace && hasGit && changedFiles.length > 0 && (
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel}>
+                  Changed Files
+                  <span className={styles.formOptional}>
+                    ({changedFiles.length} file{changedFiles.length > 1 ? 's' : ''} changed)
+                  </span>
+                </label>
+                <div style={{
+                  maxHeight: '200px',
+                  overflowY: 'auto',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-primary, rgba(255,255,255,0.1))',
+                  background: 'var(--bg-tertiary, rgba(0,0,0,0.2))',
+                }}>
+                  {changedFiles.map((file) => (
+                    <label
+                      key={file.filePath}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 14px',
+                        cursor: 'pointer',
+                        borderBottom: '1px solid rgba(255,255,255,0.05)',
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedFiles.includes(file.filePath)}
+                        onChange={() => toggleFileSelection(file.filePath)}
+                        style={{ accentColor: '#4ade80', width: '16px', height: '16px' }}
+                      />
+                      <span style={{
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        background: file.status === 'added' ? 'rgba(74,222,128,0.15)' : file.status === 'deleted' ? 'rgba(239,68,68,0.15)' : 'rgba(250,204,21,0.15)',
+                        color: file.status === 'added' ? '#4ade80' : file.status === 'deleted' ? '#ef4444' : '#facc15',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                      }}>
+                        {file.status === 'added' ? 'A' : file.status === 'deleted' ? 'D' : 'M'}
+                      </span>
+                      <span style={{ fontSize: '13px', fontFamily: 'monospace', opacity: 0.9 }}>
+                        {file.filePath}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                {/* Run Review Button */}
+                {!reviewFindings && (
                   <button
-                    key={mode.id}
-                    className={`${styles.modeOption} ${selectedMode === mode.id ? styles.modeOptionActive : ""}`}
-                    onClick={() => setSelectedMode(mode.id)}
+                    className={styles.pickFolderBtn}
+                    onClick={handleRunReview}
+                    disabled={isReviewing || selectedFiles.length === 0}
+                    style={{ marginTop: '10px', width: '100%' }}
                   >
-                    <span className={styles.modeOptionIcon}>{mode.icon}</span>
-                    <div className={styles.modeOptionContent}>
-                      <span className={styles.modeOptionLabel}>{mode.label}</span>
-                      <span className={styles.modeOptionDesc}>{mode.description}</span>
-                    </div>
+                    {isReviewing
+                      ? (reviewProgress || '🔍 Preparing review...')
+                      : `🔍 Analyze Changes Before Call (${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''})`}
                   </button>
-                ))}
+                )}
+
+                {/* Analysis complete — brief confirmation */}
+                {reviewFindings && (
+                  <div style={{
+                    marginTop: '10px',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    background: 'rgba(74,222,128,0.08)',
+                    border: '1px solid rgba(74,222,128,0.2)',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                  }}>
+                    ✅ Analysis complete — ready to start
+                  </div>
+                )}
+
+                <span className={styles.formHint}>
+                  Your AI partner will discuss findings with you during the call
+                </span>
               </div>
-            </div>
+            )}
+
+            {/* Git detection in progress */}
+            {isDetectingGit && (
+              <div style={{ padding: '12px', textAlign: 'center', opacity: 0.7, fontSize: '13px' }}>
+                🔍 {gitProgress || 'Detecting git changes...'}
+              </div>
+            )}
+
+            {/* No git or no changes */}
+            {pickedWorkspace && !isDetectingGit && hasGit && changedFiles.length === 0 && (
+              <div style={{ padding: '12px', opacity: 0.6, fontSize: '13px' }}>
+                ✅ No uncommitted changes detected. The AI will review your code live via screen share.
+              </div>
+            )}
+
 
             <button
               className={styles.startPairingBtn}
               onClick={handleNewProjectStart}
-              disabled={isLoadingTree}
+              disabled={
+                isLoadingTree ||
+                !pickedWorkspace ||
+                isReviewing ||
+                isDetectingGit ||
+                (hasGit && changedFiles.length > 0 && !reviewFindings)
+              }
             >
-              {isLoadingTree ? "Reading workspace..." : "🎙️ Start Pairing"}
+              {isLoadingTree
+                ? "Reading workspace..."
+                : isDetectingGit
+                  ? "🔍 Detecting changes..."
+                  : isReviewing
+                    ? "🔍 Reviewing code..."
+                    : !pickedWorkspace
+                      ? "📂 Pick a Workspace First"
+                      : (hasGit && changedFiles.length > 0 && !reviewFindings)
+                        ? "⚠️ Run Analysis First"
+                        : reviewFindings
+                          ? `🎤 Start Pairing (${reviewFindings.length} issues to discuss)`
+                          : "🎤 Start Pairing"}
             </button>
           </div>
 
           <button className={styles.backBtn} onClick={onEnd}>
             ← Back
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ENDED PHASE — Session Summary ──
+  if (phase === "ended") {
+    return (
+      <div className={styles.setupScreen}>
+        <div className={styles.pairSetupContainer}>
+          <h1 className={styles.setupTitle}>✅ Session Complete</h1>
+          <p className={styles.setupSubtitle}>
+            Here&apos;s a summary of your pair programming session
+          </p>
+
+          <div className={styles.newProjectSection}>
+            {/* Session stats */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '12px',
+              marginBottom: '20px',
+            }}>
+              <div style={{
+                padding: '16px',
+                borderRadius: '12px',
+                background: 'var(--bg-tertiary, rgba(0,0,0,0.2))',
+                border: '1px solid var(--border-primary, rgba(255,255,255,0.1))',
+                textAlign: 'center',
+              }}>
+                <div style={{ fontSize: '24px', fontWeight: 700 }}>{formatTime(elapsedTime)}</div>
+                <div style={{ fontSize: '12px', opacity: 0.6, marginTop: '4px' }}>Session Duration</div>
+              </div>
+              <div style={{
+                padding: '16px',
+                borderRadius: '12px',
+                background: 'var(--bg-tertiary, rgba(0,0,0,0.2))',
+                border: '1px solid var(--border-primary, rgba(255,255,255,0.1))',
+                textAlign: 'center',
+              }}>
+                <div style={{ fontSize: '24px', fontWeight: 700 }}>{selectedFiles.length || '—'}</div>
+                <div style={{ fontSize: '12px', opacity: 0.6, marginTop: '4px' }}>Files Reviewed</div>
+              </div>
+            </div>
+
+            {/* Review findings summary */}
+            {reviewFindings && reviewFindings.length > 0 && (
+              <div style={{
+                padding: '14px',
+                borderRadius: '10px',
+                background: 'rgba(250,204,21,0.06)',
+                border: '1px solid rgba(250,204,21,0.15)',
+                marginBottom: '16px',
+              }}>
+                <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '10px' }}>
+                  📋 Pre-Analysis Findings ({reviewFindings.length})
+                </div>
+                <div style={{ fontSize: '13px', lineHeight: '1.6' }}>
+                  {reviewFindings.slice(0, 5).map((f, i) => (
+                    <div key={i} style={{ marginBottom: '6px', opacity: 0.85 }}>
+                      <span style={{
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        padding: '1px 5px',
+                        borderRadius: '3px',
+                        marginRight: '6px',
+                        background: f.severity === 'ERROR' ? 'rgba(239,68,68,0.15)' : f.severity === 'WARNING' ? 'rgba(250,204,21,0.15)' : 'rgba(74,222,128,0.15)',
+                        color: f.severity === 'ERROR' ? '#ef4444' : f.severity === 'WARNING' ? '#facc15' : '#4ade80',
+                      }}>{f.severity}</span>
+                      <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>{f.file}:{f.line}</span>
+                      <span style={{ marginLeft: '6px' }}>— {f.message}</span>
+                    </div>
+                  ))}
+                  {reviewFindings.length > 5 && (
+                    <div style={{ opacity: 0.5, fontSize: '12px' }}>
+                      +{reviewFindings.length - 5} more findings
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Goal reminder */}
+            {sessionGoal && (
+              <div style={{
+                padding: '12px 14px',
+                borderRadius: '8px',
+                background: 'var(--bg-tertiary, rgba(0,0,0,0.2))',
+                border: '1px solid var(--border-primary, rgba(255,255,255,0.1))',
+                marginBottom: '16px',
+                fontSize: '13px',
+              }}>
+                <strong>Goal:</strong> {sessionGoal}
+              </div>
+            )}
+
+            {/* Copyable IDE fix prompt */}
+            {reviewFindings && reviewFindings.length > 0 && (() => {
+              const prompt = `Fix the following issues found during code review:\n\n${reviewFindings.map((f, i) =>
+                `${i + 1}. [${f.severity}] ${f.file}:${f.line}\n   Issue: ${f.message}${f.suggestedFix ? `\n   Suggested fix: ${f.suggestedFix}` : ''}`
+              ).join('\n\n')}`;
+
+              return (
+                <div style={{
+                  marginBottom: '16px',
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '8px',
+                  }}>
+                    <div style={{ fontSize: '14px', fontWeight: 600 }}>
+                      🛠️ Fix Prompt — paste in your IDE
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(prompt);
+                        const btn = document.getElementById('copy-prompt-btn');
+                        if (btn) { btn.textContent = '✓ Copied!'; setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000); }
+                      }}
+                      id="copy-prompt-btn"
+                      style={{
+                        padding: '4px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        background: 'rgba(255,255,255,0.05)',
+                        color: 'inherit',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      📋 Copy
+                    </button>
+                  </div>
+                  <pre style={{
+                    padding: '14px',
+                    borderRadius: '10px',
+                    background: 'rgba(0,0,0,0.3)',
+                    border: '1px solid var(--border-primary, rgba(255,255,255,0.1))',
+                    fontSize: '12px',
+                    lineHeight: '1.5',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    maxHeight: '200px',
+                    overflowY: 'auto',
+                    margin: 0,
+                    fontFamily: 'monospace',
+                  }}>
+                    {prompt}
+                  </pre>
+                </div>
+              );
+            })()}
+
+            <button
+              className={styles.startPairingBtn}
+              onClick={onEnd}
+            >
+              ← Back to Home
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -601,24 +853,6 @@ export default function PairSession({ onEnd }: PairSessionProps) {
               >
                 {isRecording ? "⏹ Mute" : "🎤 Unmute"}
               </button>
-              <button
-                onClick={isScreenSharing ? stopScreenShare : startScreenShare}
-                className={`${styles.micBtn} ${isScreenSharing ? styles.screenBtnActive : styles.screenBtnInactive}`}
-              >
-                {isScreenSharing ? "🖥️ Stop Sharing" : "🖥️ Share Screen"}
-              </button>
-              {isScreenSharing && (
-                <button
-                  onClick={() =>
-                    sendText(
-                      "[REVIEW_NOW] Look at my screen right now. Describe exactly what you see and give me your honest review — architecture, clean code, bugs, everything."
-                    )
-                  }
-                  className={styles.reviewBtn}
-                >
-                  👀 Review This
-                </button>
-              )}
             </div>
             <div className={styles.inputRow}>
               <input

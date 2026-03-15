@@ -2,9 +2,14 @@
 
 import { useState, useRef, useCallback } from "react";
 import {
-  fetchVoiceToken, buildWsUrl, arrayBufferToBase64,
-  base64ToArrayBuffer, downsampleTo16k, float32ToInt16,
+  fetchVoiceToken, arrayBufferToBase64,
+  downsampleTo16k, float32ToInt16,
 } from "@/lib/voiceUtils";
+import { GoogleGenAI } from "@google/genai";
+import type { Session } from "@google/genai";
+import { useAudioPlayback } from "@/hooks/useAudioPlayback";
+import { buildHuntIntroPrompt, HUNT_INTRO_FALLBACK } from "@/config/prompts";
+import * as traceClient from "@/lib/traceClient";
 
 export interface VoiceTranscript {
   role: "user" | "ai";
@@ -25,81 +30,42 @@ export interface UseHuntVoiceReturn {
   toggleMicrophone: () => void;
   sendText: (text: string) => void;
   sendCodeUpdate: (code: string) => void;
+  postSessionReport: any;
 }
 
 export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [postSessionReport, setPostSessionReport] = useState<any>(null);
+
+  const fullTranscriptRef = useRef<string>("");
 
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const sessionRef = useRef<Session | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const nextPlayTimeRef = useRef(0);
-  const speakingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
-  // ── Audio Playback ──
+  const {
+    playAudioChunk, flushAudioQueue, clearCompletedSources,
+    isSpeaking, audioContextRef,
+  } = useAudioPlayback("[Hunt]");
 
-  const playAudioChunk = (base64Audio: string) => {
-    if (!audioContextRef.current) return;
-    const ctx = audioContextRef.current;
-    const arrayBuffer = base64ToArrayBuffer(base64Audio);
-    const int16Array = new Int16Array(arrayBuffer);
-    const float32Array = new Float32Array(int16Array.length);
-    for (let i = 0; i < int16Array.length; i++) {
-      float32Array[i] = int16Array[i] / 32768.0;
-    }
-    const audioBuffer = ctx.createBuffer(1, float32Array.length, 24000);
-    audioBuffer.getChannelData(0).set(float32Array);
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(ctx.destination);
-    activeSourcesRef.current.push(source);
-    source.onended = () => {
-      activeSourcesRef.current = activeSourcesRef.current.filter(s => s !== source);
-    };
-    const currentTime = ctx.currentTime;
-    if (nextPlayTimeRef.current < currentTime) {
-      nextPlayTimeRef.current = currentTime;
-    }
-    source.start(nextPlayTimeRef.current);
-    nextPlayTimeRef.current += audioBuffer.duration;
-
-    setIsSpeaking(true);
-    if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
-    speakingTimerRef.current = setTimeout(() => {
-      setIsSpeaking(false);
-    }, audioBuffer.duration * 1000 + 500);
-  };
-
-  // ── Flush Audio Queue (on interruption) ──
-
-  const flushAudioQueue = () => {
-    for (const source of activeSourcesRef.current) {
-      try { source.stop(); } catch { /* already stopped */ }
-    }
-    activeSourcesRef.current = [];
-    nextPlayTimeRef.current = 0;
-    setIsSpeaking(false);
-    if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
-    console.log('[Hunt] 🧹 Audio queue flushed — all scheduled audio stopped');
-  };
+  // ── Tracing session ID ──
+  const traceSessionIdRef = useRef<string>("");
 
   // ── Text / Code Sending ──
 
   const sendText = useCallback((text: string) => {
-    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({
-      clientContent: {
-        turns: [{ role: "user", parts: [{ text }] }],
-        turnComplete: true,
-      },
-    }));
+    if (!sessionRef.current) return;
+    
+    fullTranscriptRef.current += `\nDeveloper: ${text}`;
+    
+    sessionRef.current.sendClientContent({
+      turns: [{ role: "user", parts: [{ text }] }],
+      turnComplete: true,
+    });
   }, []);
 
   const sendCodeUpdate = useCallback((code: string) => {
@@ -115,12 +81,32 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     streamRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
-    wsRef.current?.close();
-    wsRef.current = null;
+    sessionRef.current = null;
     setIsConnected(false);
     setIsRecording(false);
-    setIsSpeaking(false);
-  }, []);
+    flushAudioQueue();
+
+    if (traceSessionIdRef.current) {
+      traceClient.endTrace(traceSessionIdRef.current);
+      traceSessionIdRef.current = "";
+    }
+
+    if (fullTranscriptRef.current) {
+      // Send the session transcript to our ADK backend for evaluation
+      fetch('/api/summarize-session', {
+        method: 'POST',
+        body: JSON.stringify({ transcript: fullTranscriptRef.current }),
+        headers: { 'Content-Type': 'application/json' }
+      })
+      .then(res => res.json())
+      .then(data => {
+        setPostSessionReport(data);
+      })
+      .catch(err => console.error("[Hunt] Failed to get session summary:", err));
+      
+      fullTranscriptRef.current = ""; // Reset for next session
+    }
+  }, [flushAudioQueue]);
 
   // ── Toggle Microphone ──
 
@@ -138,36 +124,26 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
 
   const startSession = async (bugContext?: string) => {
     // Clean up any existing connection first
-    if (wsRef.current) {
-      wsRef.current.onopen = null;
-      wsRef.current.onmessage = null;
-      wsRef.current.onclose = null;
-      wsRef.current.onerror = null;
-      wsRef.current.close();
-      wsRef.current = null;
+    if (sessionRef.current) {
+      sessionRef.current = null;
     }
+    setPostSessionReport(null);
+    fullTranscriptRef.current = "";
 
     try {
-      const token = await fetchVoiceToken("hunt");
-      wsRef.current = new WebSocket(buildWsUrl(token));
+      const ephemeralToken = await fetchVoiceToken("hunt");
+      
+      // Initialize the official Google GenAI SDK using the ephemeral token
+      const ai = new GoogleGenAI({
+        apiKey: ephemeralToken,
+        httpOptions: { apiVersion: 'v1alpha' },
+      });
 
-      wsRef.current.onopen = (event) => {
-        const ws = event.target as WebSocket;
-        console.log("[Hunt] WebSocket open, sending setup...");
-        ws.send(JSON.stringify({
-          setup: {
-            model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
-            generationConfig: {
-              responseModalities: ["AUDIO"],
-              speechConfig: {
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
-              }
-            },
-            inputAudioTranscription: {},
-            outputAudioTranscription: {},
-          }
-        }));
-      };
+      // ── Start session trace ──
+      traceSessionIdRef.current = traceClient.generateSessionId();
+      traceClient.startTrace(traceSessionIdRef.current, "hunt", {
+        hasBugContext: !!bugContext,
+      });
 
       // Helper: start mic + send bug context (called after setupComplete)
       const startMicAndContext = async () => {
@@ -188,87 +164,106 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
           const nativeSampleRate = ctx.sampleRate;
 
           processor.onaudioprocess = (e) => {
-            if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+            if (!sessionRef.current) return;
             const inputData = downsampleTo16k(e.inputBuffer.getChannelData(0), nativeSampleRate);
             const pcm16 = float32ToInt16(inputData);
             const base64Audio = arrayBufferToBase64(pcm16.buffer as ArrayBuffer);
-            wsRef.current?.send(JSON.stringify({
-              realtimeInput: { audio: { data: base64Audio, mimeType: "audio/pcm;rate=16000" } }
-            }));
+            sessionRef.current.sendRealtimeInput({ audio: { mimeType: "audio/pcm;rate=16000", data: base64Audio } });
           };
 
           // Send bug context
           const introText = bugContext
-            ? `You are starting a SpotTheBug code review training session. Here is the buggy code:\n\n${bugContext}\n\nIntroduce this code to the developer. Tell them to take their time reading it. Ask them what they notice. Be encouraging. Do NOT reveal the bug. When the developer correctly identifies and explains the bug, congratulate them and include exactly [BUG_SOLVED] in your response.`
-            : "Hello! Briefly introduce the SpotTheBug training session.";
+            ? buildHuntIntroPrompt(bugContext)
+            : HUNT_INTRO_FALLBACK;
 
-          wsRef.current?.send(JSON.stringify({
-            clientContent: {
-              turns: [{ role: "user", parts: [{ text: introText }] }],
-              turnComplete: true,
-            }
-          }));
+          sessionRef.current?.sendClientContent({
+            turns: [{ role: "user", parts: [{ text: introText }] }],
+            turnComplete: true,
+          });
         } catch (micError) {
           console.error("[Hunt] Microphone error:", micError);
           stopSession();
         }
       };
 
-      // ── Message handler ──
-      wsRef.current.onmessage = async (event) => {
-        try {
-          const rawData = event.data instanceof Blob ? await event.data.text() : event.data;
-          const data = JSON.parse(rawData);
-
-          if (data.setupComplete) {
-            console.log("[Hunt] Setup complete, starting mic...");
+      const session = await ai.live.connect({
+        model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+        config: {
+          responseModalities: ["AUDIO"] as any,
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+          } as any,
+        },
+        callbacks: {
+          onopen: () => {
+            console.log("[Hunt] ✅ SDK Session Setup complete, starting mic...");
+            traceClient.traceEvent(traceSessionIdRef.current, 'ws.open');
             setIsConnected(true);
+            traceClient.traceEvent(traceSessionIdRef.current, 'ws.setupComplete');
             startMicAndContext();
-          }
+          },
+          onmessage: async (response: any) => {
+            try {
+              const data = response;
 
-          if (data.serverContent?.turnComplete) {
-            activeSourcesRef.current = [];
-          }
-
-          if (data.serverContent?.interrupted) {
-            flushAudioQueue();
-            console.warn('[Hunt] 🗣️ INTERRUPTED — flushed audio queue');
-          }
-
-          if (data.serverContent?.modelTurn?.parts) {
-            for (const part of data.serverContent.modelTurn.parts) {
-              if (part.inlineData?.mimeType?.startsWith("audio/pcm")) {
-                playAudioChunk(part.inlineData.data);
+              if (data.serverContent?.error) {
+                 console.error("[Hunt] ❌ SDK Server error:", JSON.stringify(data.serverContent.error));
+                 return;
               }
-            }
-          }
 
-          if (data.serverContent?.outputTranscription?.text) {
-            const text = data.serverContent.outputTranscription.text;
-            optionsRef.current.onTranscript?.({ role: "ai", text });
-            if (text.includes("[BUG_SOLVED]")) {
-              optionsRef.current.onBugSolved?.();
-            }
-          }
+              if (data.serverContent?.turnComplete) {
+                clearCompletedSources();
+              }
 
-          if (data.serverContent?.inputTranscription?.text) {
-            optionsRef.current.onTranscript?.({ role: "user", text: data.serverContent.inputTranscription.text });
+              if (data.serverContent?.interrupted) {
+                flushAudioQueue();
+                traceClient.traceEvent(traceSessionIdRef.current, 'ai.interrupted');
+              }
+
+              // Audio chunks
+              if (data.serverContent?.modelTurn?.parts) {
+                for (const part of data.serverContent.modelTurn.parts) {
+                   // The SDK abstracts the message structure, the audio data comes back as part.inlineData
+                  if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
+                    playAudioChunk(part.inlineData.data);
+                  }
+                }
+              }
+
+              // AI transcript
+              if (data.serverContent?.modelTurn?.parts) {
+                 for (const part of data.serverContent.modelTurn.parts) {
+                    if (part.text) {
+                      const text = part.text;
+                      fullTranscriptRef.current += `\nCoach: ${text}`;
+                      traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
+                      optionsRef.current.onTranscript?.({ role: "ai", text });
+                      if (text.includes("[BUG_SOLVED]")) {
+                        traceClient.traceEvent(traceSessionIdRef.current, 'hunt.bug.solved');
+                        optionsRef.current.onBugSolved?.();
+                      }
+                    }
+                 }
+              }
+
+            } catch (e) {
+              console.error("[Hunt] Failed to parse SDK message", e);
+            }
+          },
+          onerror: (err) => {
+             console.error("[Hunt] SDK Error:", err);
+             stopSession();
+          },
+          onclose: () => {
+             console.log("[Hunt] SDK Session closed");
+             traceClient.traceEvent(traceSessionIdRef.current, 'ws.close');
+             setIsConnected(false);
+             setIsRecording(false);
           }
-        } catch (e) {
-          console.error("[Hunt] Failed to parse WS message", e);
         }
-      };
-
-      wsRef.current.onclose = () => {
-        console.log("[Hunt] WebSocket closed");
-        setIsConnected(false);
-        setIsRecording(false);
-      };
-
-      wsRef.current.onerror = (err) => {
-        console.error("[Hunt] WebSocket error:", err);
-        stopSession();
-      };
+      });
+      
+      sessionRef.current = session;
 
     } catch (error) {
       console.error("[Hunt] Failed to start:", error);
@@ -279,6 +274,6 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   return {
     isConnected, isRecording, isSpeaking,
     startSession, stopSession, toggleMicrophone,
-    sendText, sendCodeUpdate,
+    sendText, sendCodeUpdate, postSessionReport
   };
 }

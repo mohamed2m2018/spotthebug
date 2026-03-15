@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { chatWithGemini, CODE_COACH_SYSTEM_PROMPT } from "@/lib/gemini";
+import { chatWithGemini } from "@/lib/gemini";
+import { CODE_COACH_SYSTEM_PROMPT, buildTextSessionIntroPrompt, buildEvaluationPrompt } from "@/config/prompts";
 import { getRandomBug } from "@/lib/bugs";
 import type { GeminiMessage } from "@/lib/gemini";
 import type { Bug } from "@/lib/bugs";
@@ -27,7 +28,13 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const introPrompt = buildIntroPrompt(selectedBug);
+      const introPrompt = buildTextSessionIntroPrompt(
+        selectedBug.buggyCode,
+        selectedBug.language,
+        selectedBug.description,
+        selectedBug.framework,
+        selectedBug.category
+      );
       const aiResponse = await chatWithGemini(
         [{ role: "user", parts: [{ text: introPrompt }] }],
         CODE_COACH_SYSTEM_PROMPT
@@ -59,7 +66,7 @@ export async function POST(req: NextRequest) {
 
       const history: GeminiMessage[] = conversationHistory || [];
       
-      const evaluationPrompt = buildEvaluationPrompt(bug, userMessage);
+      const evaluationPrompt = buildEvaluationPrompt(userMessage);
       history.push({ role: "user", parts: [{ text: evaluationPrompt }] });
 
       const aiResponse = await chatWithGemini(history, CODE_COACH_SYSTEM_PROMPT);
@@ -121,32 +128,7 @@ export async function POST(req: NextRequest) {
 // Helper functions (server-side only)
 // ==========================================
 
-function buildIntroPrompt(bug: Bug): string {
-  return `You are starting a new code review training round.
 
-Here is the buggy code the developer will see on screen:
-
-\`\`\`${bug.language}
-${bug.buggyCode}
-\`\`\`
-
-Context: ${bug.description}
-Framework: ${bug.framework}
-Category: ${bug.category}
-
-Introduce this code to the developer. Tell them to take their time reading it. Ask them what they notice. Be encouraging and conversational. Do NOT reveal the bug.`;
-}
-
-function buildEvaluationPrompt(bug: { id: string; title: string }, userMessage: string): string {
-  return `The developer said: "${userMessage}"
-
-Evaluate their response. Are they getting close to identifying the bug? Guide them with:
-- If they're on the right track: encourage them and ask them to elaborate
-- If they're wrong: gently redirect without giving the answer
-- If they found it: celebrate and explain why it matters
-
-Keep your response to 2-3 sentences. Be conversational.`;
-}
 
 function getFullBug(bugId: string): Bug | undefined {
   const { bugs } = require("@/lib/bugs");

@@ -21,12 +21,24 @@ export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-/** Fetch ephemeral token from our API */
-export async function fetchVoiceToken(mode: "hunt" | "pair"): Promise<string> {
+/** Fetch ephemeral token from our API, optionally including review context */
+export async function fetchVoiceToken(
+  mode: "hunt" | "pair",
+  dynamicContext?: {
+    reviewFindings?: unknown[];
+    selectedFiles?: string[];
+    goal?: string;
+  }
+): Promise<string> {
   const res = await fetch("/api/voice/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({
+      mode,
+      ...(dynamicContext?.reviewFindings && { reviewFindings: dynamicContext.reviewFindings }),
+      ...(dynamicContext?.selectedFiles && { selectedFiles: dynamicContext.selectedFiles }),
+      ...(dynamicContext?.goal && { goal: dynamicContext.goal }),
+    }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to get voice token");
