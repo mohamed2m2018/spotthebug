@@ -41,6 +41,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const nextPlayTimeRef = useRef(0);
   const speakingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
   // ── Audio Playback ──
 
@@ -58,6 +59,10 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
+    activeSourcesRef.current.push(source);
+    source.onended = () => {
+      activeSourcesRef.current = activeSourcesRef.current.filter(s => s !== source);
+    };
     const currentTime = ctx.currentTime;
     if (nextPlayTimeRef.current < currentTime) {
       nextPlayTimeRef.current = currentTime;
@@ -70,6 +75,19 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     speakingTimerRef.current = setTimeout(() => {
       setIsSpeaking(false);
     }, audioBuffer.duration * 1000 + 500);
+  };
+
+  // ── Flush Audio Queue (on interruption) ──
+
+  const flushAudioQueue = () => {
+    for (const source of activeSourcesRef.current) {
+      try { source.stop(); } catch { /* already stopped */ }
+    }
+    activeSourcesRef.current = [];
+    nextPlayTimeRef.current = 0;
+    setIsSpeaking(false);
+    if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
+    console.log('[Hunt] 🧹 Audio queue flushed — all scheduled audio stopped');
   };
 
   // ── Text / Code Sending ──
@@ -206,6 +224,15 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
             console.log("[Hunt] Setup complete, starting mic...");
             setIsConnected(true);
             startMicAndContext();
+          }
+
+          if (data.serverContent?.turnComplete) {
+            activeSourcesRef.current = [];
+          }
+
+          if (data.serverContent?.interrupted) {
+            flushAudioQueue();
+            console.warn('[Hunt] 🗣️ INTERRUPTED — flushed audio queue');
           }
 
           if (data.serverContent?.modelTurn?.parts) {

@@ -54,6 +54,7 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   const speakingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const screenIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
   // ── Diagnostic counters ──
   const audioChunkCountRef = useRef(0);
@@ -88,6 +89,10 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
+    activeSourcesRef.current.push(source);
+    source.onended = () => {
+      activeSourcesRef.current = activeSourcesRef.current.filter(s => s !== source);
+    };
     const currentTime = ctx.currentTime;
     if (nextPlayTimeRef.current < currentTime) {
       nextPlayTimeRef.current = currentTime;
@@ -103,6 +108,19 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
     speakingTimerRef.current = setTimeout(() => {
       setIsSpeaking(false);
     }, scheduledDuration * 1000 + 500);
+  };
+
+  // ── Flush Audio Queue (on interruption) ──
+
+  const flushAudioQueue = () => {
+    for (const source of activeSourcesRef.current) {
+      try { source.stop(); } catch { /* already stopped */ }
+    }
+    activeSourcesRef.current = [];
+    nextPlayTimeRef.current = 0;
+    setIsSpeaking(false);
+    if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
+    console.log('[Pair] 🧹 Audio queue flushed — all scheduled audio stopped');
   };
 
   // ── Text Sending ──
@@ -161,13 +179,13 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
         frameCountRef.current++;
         const frameNum = frameCountRef.current;
 
-        const maxDim = 1024;
+        const maxDim = 1536;
         const scale = Math.min(maxDim / video.videoWidth, maxDim / video.videoHeight, 1);
         canvas.width = video.videoWidth * scale;
         canvas.height = video.videoHeight * scale;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
         const base64Data = dataUrl.split(',')[1];
 
         console.log(`[Pair] 📹 Frame #${frameNum} sent — ${canvas.width}x${canvas.height}, ${(base64Data.length / 1024).toFixed(0)}KB`);
@@ -370,12 +388,14 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
 
           // Turn complete
           if (data.serverContent?.turnComplete) {
+            activeSourcesRef.current = [];
             console.log(`[Pair] 🔄 Turn complete — total audio chunks played so far: ${audioChunkCountRef.current}`);
           }
 
           // Interrupted (user spoke while AI was talking)
           if (data.serverContent?.interrupted) {
-            console.warn(`[Pair] 🗣️ INTERRUPTED — the model was cut off. Audio chunks so far: ${audioChunkCountRef.current}, mic chunks: ${micChunkCountRef.current}, video frames: ${frameCountRef.current}`);
+            flushAudioQueue();
+            console.warn(`[Pair] 🗣️ INTERRUPTED — flushed audio queue. Chunks so far: ${audioChunkCountRef.current}, mic: ${micChunkCountRef.current}, frames: ${frameCountRef.current}`);
           }
 
           // Audio chunks
