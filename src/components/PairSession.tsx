@@ -43,9 +43,32 @@ export default function PairSession({ onEnd }: PairSessionProps) {
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewProgress, setReviewProgress] = useState('');
   const [reviewStep, setReviewStep] = useState(0);
+  const [simulatedProgress, setSimulatedProgress] = useState(0);
   const [reviewTool, setReviewTool] = useState<string>("");
 
   // Active session state
+
+  // Simulated sub-step progress — creeps the bar forward between SSE events
+  // so the user sees continuous movement instead of discrete jumps
+  useEffect(() => {
+    if (!isReviewing || reviewStep === 0) {
+      setSimulatedProgress(0);
+      return;
+    }
+    const stepBase = (reviewStep / 3) * 100;       // e.g. 33%, 66%, 100%
+    const stepCeiling = ((reviewStep + 1) / 3) * 100; // next step boundary
+    const range = stepCeiling - stepBase;            // 33.3%
+    setSimulatedProgress(stepBase);                  // snap to step baseline
+    let tick = 0;
+    const interval = setInterval(() => {
+      tick++;
+      // Asymptotic ease: fast initial movement, slows down approaching ceiling
+      // Never exceeds 85% of the way to the next step
+      const fraction = Math.min(0.85, 1 - 1 / (1 + tick * 0.08));
+      setSimulatedProgress(stepBase + range * fraction);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [reviewStep, isReviewing]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -626,6 +649,19 @@ export default function PairSession({ onEnd }: PairSessionProps) {
             Set up your session for focused, structured code review
           </p>
 
+          {/* Prerequisites */}
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: '8px',
+            padding: '12px 16px', margin: '16px 0',
+            background: 'rgba(56, 189, 248, 0.06)',
+            borderLeft: '3px solid #38bdf8',
+            borderRadius: '6px', fontSize: '0.85rem', color: 'var(--color-text-secondary)',
+          }}>
+            <span style={{ fontWeight: 600, color: '#38bdf8', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Before you start</span>
+            <span>✅ Have <strong style={{ color: 'var(--color-text-primary)' }}>uncommitted changes</strong> in your workspace — the AI reviews your git diff</span>
+            <span>✅ Share your <strong style={{ color: 'var(--color-text-primary)' }}>editor window</strong> when prompted — the AI watches your screen live</span>
+          </div>
+
           {/* Workspace Setup */}
           <div className={styles.newProjectSection}>
 
@@ -775,7 +811,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
                         <div className={styles.reviewProgressBar}>
                           <div
                             className={styles.reviewProgressFill}
-                            style={{ width: `${Math.max(5, (reviewStep / 3) * 100)}%` }}
+                            style={{ width: `${Math.max(5, simulatedProgress)}%` }}
                           />
                         </div>
                         <div className={styles.reviewProgressMeta}>
@@ -783,7 +819,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
                             Step {reviewStep}/3
                           </span>
                           <span className={styles.reviewProgressPercent}>
-                            {Math.round((reviewStep / 3) * 100)}%
+                            {Math.round(simulatedProgress)}%
                           </span>
                         </div>
                       </div>
