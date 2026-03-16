@@ -55,7 +55,12 @@ export default function PairSession({ onEnd }: PairSessionProps) {
       setSimulatedProgress(0);
       return;
     }
-    const stepBase = (reviewStep / 3) * 100;       // e.g. 33%, 66%, 100%
+    // Final step — snap to 100%, no need to creep further
+    if (reviewStep >= 3) {
+      setSimulatedProgress(100);
+      return;
+    }
+    const stepBase = (reviewStep / 3) * 100;       // e.g. 33%, 66%
     const stepCeiling = ((reviewStep + 1) / 3) * 100; // next step boundary
     const range = stepCeiling - stepBase;            // 33.3%
     setSimulatedProgress(stepBase);                  // snap to step baseline
