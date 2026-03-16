@@ -129,26 +129,6 @@ export default function Home() {
         </div>
 
         <div className={styles.modesGrid}>
-          {/* Bug Hunt */}
-          <div className={`${styles.modeCard} ${styles.modeCardHunt}`}>
-            <div className={styles.modeCardIcon}>🔍</div>
-            <h3 className={styles.modeCardTitle}>Bug Hunt</h3>
-            <p className={styles.modeCardDesc}>
-              Find real-world bugs in curated code. The AI voice coach guides you with progressive
-              hints — never gives the answer.
-            </p>
-            <ul className={styles.modeCardFeatures}>
-              <li>AI-generated bugs from real open-source patterns</li>
-              <li>Voice conversation with interruption support</li>
-              <li>Post-session AI evaluation via Google ADK</li>
-              <li>Progressive difficulty across frameworks</li>
-            </ul>
-            <div className={styles.modeCardTech}>
-              <span className={styles.techTag}>Gemini Live API</span>
-              <span className={styles.techTag}>Google ADK</span>
-            </div>
-          </div>
-
           {/* Pair Programming */}
           <div className={`${styles.modeCard} ${styles.modeCardPair}`}>
             <div className={styles.modeCardPopular}>★ Most Advanced</div>
@@ -188,6 +168,26 @@ export default function Home() {
             <div className={styles.modeCardTech}>
               <span className={styles.techTag}>Code Execution</span>
               <span className={styles.techTag}>Google Search</span>
+            </div>
+          </div>
+
+          {/* Bug Hunt */}
+          <div className={`${styles.modeCard} ${styles.modeCardHunt}`}>
+            <div className={styles.modeCardIcon}>🔍</div>
+            <h3 className={styles.modeCardTitle}>Bug Hunt</h3>
+            <p className={styles.modeCardDesc}>
+              Find real-world bugs in the built-in code editor. The AI voice coach sees your edits
+              in real-time and guides you with progressive hints.
+            </p>
+            <ul className={styles.modeCardFeatures}>
+              <li>AI-generated bugs from real open-source patterns</li>
+              <li>Voice conversation with interruption support</li>
+              <li>Post-session AI evaluation via Google ADK</li>
+              <li>Progressive difficulty across frameworks</li>
+            </ul>
+            <div className={styles.modeCardTech}>
+              <span className={styles.techTag}>Gemini Live API</span>
+              <span className={styles.techTag}>Google ADK</span>
             </div>
           </div>
         </div>

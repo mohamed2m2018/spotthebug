@@ -53,19 +53,11 @@ export default function SessionPage() {
           <div className={styles.modeGrid}>
             <button
               className={styles.modeCard}
-              onClick={() => { setMode("hunt"); setPhase("setup"); }}
-            >
-              <span className={styles.modeIcon}>🔍</span>
-              <span className={styles.modeLabel}>Bug Hunt</span>
-              <span className={styles.modeDesc}>Find bugs in curated code snippets with AI coaching</span>
-            </button>
-            <button
-              className={styles.modeCard}
               onClick={() => { setMode("pair"); setPhase("active"); }}
             >
               <span className={styles.modeIcon}>🤝</span>
               <span className={styles.modeLabel}>Pair with AI</span>
-              <span className={styles.modeDesc}>Share your screen and get real-time code review</span>
+              <span className={styles.modeDesc}>Share your screen and get real-time voice code review</span>
             </button>
             <button
               className={styles.modeCard}
@@ -74,6 +66,14 @@ export default function SessionPage() {
               <span className={styles.modeIcon}>🧩</span>
               <span className={styles.modeLabel}>Problem Solve</span>
               <span className={styles.modeDesc}>Tackle coding challenges with AI-grounded coaching</span>
+            </button>
+            <button
+              className={styles.modeCard}
+              onClick={() => { setMode("hunt"); setPhase("setup"); }}
+            >
+              <span className={styles.modeIcon}>🔍</span>
+              <span className={styles.modeLabel}>Bug Hunt</span>
+              <span className={styles.modeDesc}>Find bugs in the built-in code editor with AI voice coaching</span>
             </button>
           </div>
 
