@@ -11,7 +11,7 @@ AI voice coding coach that talks to you and sees your screen. Hunt bugs, pair pr
 - **Node.js** 20+
 - **npm** 9+
 - A **Gemini API Key** from [Google AI Studio](https://aistudio.google.com/apikey)
-- (Optional) An **E2B API Key** from [e2b.dev](https://e2b.dev) — required for Problem Solve mode's sandboxed code execution
+- An **E2B API Key** from [e2b.dev](https://e2b.dev) — required for Problem Solve mode's sandboxed code execution
 
 ## Setup
 
@@ -26,7 +26,7 @@ npm install --legacy-peer-deps
 Create a `.env.local` file in the project root:
 
 ```bash
-# Required
+# Required — get yours at https://aistudio.google.com/apikey
 GEMINI_API_KEY=your_gemini_api_key_here
 
 # Auth (generate a random secret for production)
@@ -36,8 +36,18 @@ NEXTAUTH_URL=http://localhost:3000
 # Database (local SQLite — no external DB needed)
 DATABASE_URL=file:./prisma/dev.db
 
-# Optional — needed for Problem Solve mode (sandboxed code execution)
+# Required for Problem Solve mode (sandboxed code execution)
+# Get your key at https://e2b.dev/dashboard/[profilename]/keys
+# Without this key, the app still runs but "Run Tests" in Problem Solve mode will not work
 E2B_API_KEY=your_e2b_api_key_here
+
+# Optional — AI observability (get keys at https://cloud.langfuse.com)
+# The app works fully without these; they enable tracing/monitoring only
+LANGFUSE_SECRET_KEY=your_langfuse_secret_key
+LANGFUSE_PUBLIC_KEY=your_langfuse_public_key
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+NEXT_PUBLIC_LANGFUSE_PUBLIC_KEY=your_langfuse_public_key
+NEXT_PUBLIC_LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
 ### 3. Set up the database
