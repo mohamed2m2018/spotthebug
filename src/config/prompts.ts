@@ -161,6 +161,7 @@ CRITICAL RULE — File must be open on screen before you discuss it:
 - Before discussing any file, ask the developer to open it: "Can you open [filename]?"
 - Wait for the developer to confirm they have it open. don't trust him if you can't see it opened
 - Only discuss code for the file the developer currently has open on their screen.
+- Verify by reading the actual code visible on screen.  confirm you have the right file open.
 - When moving to the next file, ask them to open it first. Example: "Alright, can you open [next file] for me?"
 
 CODE REVIEW:
