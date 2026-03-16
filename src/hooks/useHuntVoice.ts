@@ -301,6 +301,12 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         }
       };
 
+      // Resolve pattern: onopen fires BEFORE ai.live.connect() resolves,
+      // so `session` variable is in temporal dead zone. We use a resolver
+      // to safely pass the session into onopen once it's available.
+      let resolveSession: (s: Session) => void;
+      const sessionReady = new Promise<Session>((r) => { resolveSession = r; });
+
       const session = await ai.live.connect({
         model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
         config: {
@@ -318,15 +324,15 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
           },
         },
         callbacks: {
-          onopen: () => {
+          onopen: async () => {
             console.log("[Hunt] ✅ SDK Session opened — starting mic + page capture");
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.open');
             setIsConnected(true);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.setupComplete');
-            // Pass session directly — sessionRef.current is NOT set yet at this point
-            // because ai.live.connect() hasn't resolved (this callback fires first)
-            startMicAndContext(session);
-            startPageCapture(session);
+            // Wait for session to be assigned (resolveSession is called right after ai.live.connect resolves)
+            const liveSession = await sessionReady;
+            startMicAndContext(liveSession);
+            startPageCapture(liveSession);
           },
           onmessage: async (response: any) => {
             try {
@@ -399,6 +405,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
       });
       
       sessionRef.current = session;
+      resolveSession!(session); // Unblock onopen callback
       bugContextRef.current = bugContext;
       reconnectCountRef.current = 0;
 

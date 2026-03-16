@@ -214,6 +214,11 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
         }
       };
 
+      // Resolve pattern: onopen fires BEFORE ai.live.connect() resolves,
+      // so `session` variable is in temporal dead zone.
+      let resolveSession: (s: Session) => void;
+      const sessionReady = new Promise<Session>((r) => { resolveSession = r; });
+
       const session = await ai.live.connect({
         model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
         config: {
@@ -230,13 +235,13 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           },
         },
         callbacks: {
-          onopen: () => {
+          onopen: async () => {
             console.log("[Solve] ✅ SDK Session opened — starting mic");
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.open');
             setIsConnected(true);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.setupComplete');
-            // Pass session directly — sessionRef.current is NOT set yet
-            startMicAndContext(session);
+            const liveSession = await sessionReady;
+            startMicAndContext(liveSession);
           },
           onmessage: async (response: any) => {
             try {
@@ -307,6 +312,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       });
       
       sessionRef.current = session;
+      resolveSession!(session);
       problemContextRef.current = problemContext;
       reconnectCountRef.current = 0;
 
