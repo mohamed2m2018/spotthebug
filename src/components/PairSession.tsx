@@ -8,6 +8,7 @@ import { isDirectoryPickerSupported, pickAndReadWorkspace, WorkspaceResult } fro
 import { isGitRepo, getChangedFiles, GitChangedFile } from "@/utils/gitDiff";
 import type { ReviewFinding } from "@/config/prompts";
 import * as traceClient from "@/lib/traceClient";
+import { recordSession } from "@/utils/recordSession";
 import styles from "@/app/session/session.module.css";
 
 interface Message {
@@ -41,6 +42,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
   const [reviewFindings, setReviewFindings] = useState<ReviewFinding[] | null>(null);
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewProgress, setReviewProgress] = useState('');
+  const [reviewStep, setReviewStep] = useState(0);
   const [reviewTool, setReviewTool] = useState<string>("");
 
   // Active session state
@@ -200,6 +202,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
 
       // Stream real progress from SSE response
       setReviewProgress('🔍 Sending code for review...');
+      setReviewStep(0);
 
       const res = await fetch('/api/review-code', {
         method: 'POST',
@@ -232,6 +235,10 @@ export default function PairSession({ onEnd }: PairSessionProps) {
               const event = JSON.parse(match[1]);
               if (event.type === 'progress') {
                 setReviewProgress(event.message);
+                // Map progress message to step number for the progress bar
+                if (event.message.includes('Analyzing')) setReviewStep(1);
+                else if (event.message.includes('Validating')) setReviewStep(2);
+                else if (event.message.includes('Structuring')) setReviewStep(3);
               } else if (event.type === 'result') {
                 data = event;
               } else if (event.type === 'error') {
@@ -269,7 +276,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
         metadata: { error: String(err) },
       });
     } finally {
-
+      setReviewStep(0);
       setReviewProgress('');
       setIsReviewing(false);
       traceClient.endTrace(reviewTraceId);
@@ -590,6 +597,8 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     stopSession();
     if (timerRef.current) clearInterval(timerRef.current);
     if (pipWindowRef.current) pipWindowRef.current.close();
+    // Record session to database
+    recordSession({ mode: 'pair', duration: elapsedTime });
     setPhase("ended");
   };
 
@@ -746,18 +755,40 @@ export default function PairSession({ onEnd }: PairSessionProps) {
                   ))}
                 </div>
 
-                {/* Run Review Button */}
+                {/* Run Review Button + Progress Bar */}
                 {!reviewFindings && (
-                  <button
-                    className={styles.pickFolderBtn}
-                    onClick={handleRunReview}
-                    disabled={isReviewing || selectedFiles.length === 0}
-                    style={{ marginTop: '10px', width: '100%' }}
-                  >
-                    {isReviewing
-                      ? (reviewProgress || '🔍 Preparing review...')
-                      : `🔍 Analyze Changes Before Call (${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''})`}
-                  </button>
+                  <div style={{ marginTop: '10px' }}>
+                    <button
+                      className={styles.pickFolderBtn}
+                      onClick={handleRunReview}
+                      disabled={isReviewing || selectedFiles.length === 0}
+                      style={{ width: '100%' }}
+                    >
+                      {isReviewing
+                        ? (reviewProgress || '🔍 Preparing review...')
+                        : `🔍 Analyze Changes Before Call (${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''})`}
+                    </button>
+
+                    {/* Progress bar — visible only during review */}
+                    {isReviewing && (
+                      <div className={styles.reviewProgressContainer}>
+                        <div className={styles.reviewProgressBar}>
+                          <div
+                            className={styles.reviewProgressFill}
+                            style={{ width: `${Math.max(5, (reviewStep / 3) * 100)}%` }}
+                          />
+                        </div>
+                        <div className={styles.reviewProgressMeta}>
+                          <span className={styles.reviewProgressLabel}>
+                            Step {reviewStep}/3
+                          </span>
+                          <span className={styles.reviewProgressPercent}>
+                            {Math.round((reviewStep / 3) * 100)}%
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Analysis complete — brief confirmation */}

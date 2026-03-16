@@ -5,6 +5,7 @@ import { useHuntVoice, VoiceTranscript } from "@/hooks/useHuntVoice";
 import { useAnimatedProgress } from "@/hooks/useAnimatedProgress";
 import BugAvatar from "@/components/BugAvatar";
 import CodeEditor from "@/components/CodeEditor";
+import { recordSession } from "@/utils/recordSession";
 import styles from "@/app/session/session.module.css";
 
 interface BugData {
@@ -160,6 +161,22 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const handleEnd = () => {
     stopSession();
     if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
+    // Record session to database
+    const elapsed = 300 - timer;
+    recordSession({
+      mode: 'hunt',
+      duration: elapsed,
+      bugsFound: solvedCount,
+      bugDetails: bug
+        ? [{
+            bugId: bug.id,
+            category: bug.category,
+            framework: bug.framework,
+            identified: solvedCount > 0,
+            timeTaken: elapsed,
+          }]
+        : [],
+    });
     setShowSummary(true);
   };
 

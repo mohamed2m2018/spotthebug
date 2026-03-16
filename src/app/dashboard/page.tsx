@@ -2,19 +2,34 @@
 
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import styles from "./dashboard.module.css";
+
+interface UserStats {
+  totalSessions: number;
+  bugsFound: number;
+}
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const [stats, setStats] = useState<UserStats | null>(null);
 
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login");
     }
   }, [status, router]);
+
+  // Fetch real stats from Prisma DB
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    fetch("/api/user-stats")
+      .then((res) => res.json())
+      .then((data) => setStats(data))
+      .catch((err) => console.error("[Dashboard] Failed to load stats:", err));
+  }, [status]);
 
   if (status === "loading") {
     return (
@@ -90,20 +105,25 @@ export default function DashboardPage() {
         <div className={styles.statsGrid}>
           <div className={styles.statCard}>
             <div className={styles.statCardLabel}>Total Sessions</div>
-            <div className={styles.statCardValue}>0</div>
-            <div className={styles.statCardSub}>Start your first one!</div>
+            <div className={styles.statCardValue}>
+              {stats ? stats.totalSessions : "—"}
+            </div>
+            <div className={styles.statCardSub}>
+              {stats && stats.totalSessions > 0
+                ? `Across all modes`
+                : "Start your first one!"}
+            </div>
           </div>
           <div className={styles.statCard}>
             <div className={styles.statCardLabel}>Bugs Found</div>
-            <div className={styles.statCardValue}>0</div>
-            <div className={styles.statCardSub}>Across all sessions</div>
-          </div>
-          <div className={styles.statCard}>
-            <div className={styles.statCardLabel}>Your Plan</div>
             <div className={styles.statCardValue}>
-              <span className={styles.tierBadge}>Free</span>
+              {stats ? stats.bugsFound : "—"}
             </div>
-            <div className={styles.statCardSub}>1 session/day, 5 min</div>
+            <div className={styles.statCardSub}>
+              {stats && stats.bugsFound > 0
+                ? "Across all sessions"
+                : "Hunt mode tracks your finds"}
+            </div>
           </div>
         </div>
       </main>

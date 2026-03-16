@@ -6,6 +6,7 @@ import type { VoiceTranscript } from "@/hooks/useProblemSolvingVoice";
 import { useAnimatedProgress } from "@/hooks/useAnimatedProgress";
 import BugAvatar from "@/components/BugAvatar";
 import CodeEditor from "@/components/CodeEditor";
+import { recordSession } from "@/utils/recordSession";
 import styles from "@/app/session/session.module.css";
 
 interface ProblemData {
@@ -126,6 +127,9 @@ export default function SolveSession({ skills, difficulty, topic, onEnd }: Solve
   const handleEnd = () => {
     stopSession();
     if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
+    // Record session to database
+    const elapsed = 1200 - timer;
+    recordSession({ mode: 'solve', duration: elapsed });
     setShowSummary(true);
   };
 
