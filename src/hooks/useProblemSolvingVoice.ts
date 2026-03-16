@@ -166,13 +166,15 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       });
 
       // Helper: start mic + send problem context
-      const startMicAndContext = async () => {
+      // Accept session as param to avoid race condition (onopen fires before sessionRef is set)
+      const startMicAndContext = async (liveSession: Session) => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
           });
           streamRef.current = stream;
           setIsRecording(true);
+          console.log('[Solve] 🎤 Mic stream acquired');
 
           const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
           audioContextRef.current = ctx;
@@ -184,23 +186,25 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           const nativeSampleRate = ctx.sampleRate;
 
           processor.onaudioprocess = (e) => {
-            if (!sessionRef.current) return;
+            const activeSession = sessionRef.current || liveSession;
+            if (!activeSession) return;
             const inputData = downsampleTo16k(e.inputBuffer.getChannelData(0), nativeSampleRate);
             const pcm16 = float32ToInt16(inputData);
             const base64Audio = arrayBufferToBase64(pcm16.buffer as ArrayBuffer);
             try {
-              sessionRef.current.sendRealtimeInput({ audio: { mimeType: "audio/pcm;rate=16000", data: base64Audio } });
+              activeSession.sendRealtimeInput({ audio: { mimeType: "audio/pcm;rate=16000", data: base64Audio } });
             } catch {
               sessionRef.current = null;
             }
           };
 
-          // Send problem context
+          // Send problem context — use liveSession directly (ref not set yet)
           const introText = problemContext
             ? buildSolveIntroPrompt(problemContext)
             : SOLVE_INTRO_FALLBACK;
 
-          sessionRef.current?.sendClientContent({
+          console.log('[Solve] 📝 Sending intro context to session');
+          liveSession.sendClientContent({
             turns: [{ role: "user", parts: [{ text: introText }] }],
             turnComplete: true,
           });
@@ -215,6 +219,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
         config: {
           responseModalities: ["AUDIO"] as any,
           systemInstruction: "You are a patient coding coach. Your top priority is respecting the developer's thinking time. When they are silent, they are thinking — wait for them to speak. Keep every response to 2-3 sentences max. Ask only one question at a time, then wait. Guide with questions only, never write code or reveal solutions. Match their energy — if they are quiet and focused, be brief. Only speak when spoken to, or when acknowledging their code updates.",
+          outputAudioTranscription: {},
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
           } as any,
@@ -226,11 +231,12 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
         },
         callbacks: {
           onopen: () => {
-            console.log("[Solve] ✅ SDK Session Setup complete, starting mic...");
+            console.log("[Solve] ✅ SDK Session opened — starting mic");
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.open');
             setIsConnected(true);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.setupComplete');
-            startMicAndContext();
+            // Pass session directly — sessionRef.current is NOT set yet
+            startMicAndContext(session);
           },
           onmessage: async (response: any) => {
             try {
@@ -272,25 +278,16 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 }
               }
 
-              // AI transcript — only surface spoken text, not thinking tokens.
-              if (data.serverContent?.modelTurn?.parts) {
-                 const parts = data.serverContent.modelTurn.parts;
-                 const hasAudio = parts.some((p: any) => p.inlineData?.data || p.inlineData?.mimeType?.startsWith("audio/pcm"));
-
-                 if (hasAudio) {
-                   for (const part of parts) {
-                     if (part.text) {
-                       const text = part.text;
-                       fullTranscriptRef.current += `\nCoach: ${text}`;
-                       traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
-                       optionsRef.current.onTranscript?.({ role: "ai", text });
-                       if (text.includes("[PROBLEM_SOLVED]")) {
-                         traceClient.traceEvent(traceSessionIdRef.current, 'solve.problem.solved');
-                         optionsRef.current.onProblemSolved?.();
-                       }
-                     }
-                   }
-                 }
+              // AI transcript — use outputTranscription API (clean spoken text only)
+              if (data.serverContent?.outputTranscription?.text) {
+                const text = data.serverContent.outputTranscription.text;
+                fullTranscriptRef.current += `\nCoach: ${text}`;
+                traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
+                optionsRef.current.onTranscript?.({ role: "ai", text });
+                if (text.includes("[PROBLEM_SOLVED]")) {
+                  traceClient.traceEvent(traceSessionIdRef.current, 'solve.problem.solved');
+                  optionsRef.current.onProblemSolved?.();
+                }
               }
 
             } catch (e) {
@@ -358,6 +355,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
         model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
         config: {
           responseModalities: ["AUDIO"] as any,
+          outputAudioTranscription: {},
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
           } as any,
@@ -388,23 +386,19 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.serverContent?.turnComplete) clearCompletedSources();
               if (data.serverContent?.interrupted) flushAudioQueue();
               if (data.serverContent?.modelTurn?.parts) {
-                const parts = data.serverContent.modelTurn.parts;
-                const hasAudio = parts.some((p: any) => p.inlineData?.data || p.inlineData?.mimeType?.startsWith("audio/pcm"));
-                for (const part of parts) {
+                for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
-                if (hasAudio) {
-                  for (const part of parts) {
-                    if (part.text) {
-                      fullTranscriptRef.current += `\nCoach: ${part.text}`;
-                      optionsRef.current.onTranscript?.({ role: "ai", text: part.text });
-                      if (part.text.includes("[PROBLEM_SOLVED]")) {
-                        optionsRef.current.onProblemSolved?.();
-                      }
-                    }
-                  }
+              }
+              // Transcript from outputTranscription API (clean spoken text only)
+              if (data.serverContent?.outputTranscription?.text) {
+                const text = data.serverContent.outputTranscription.text;
+                fullTranscriptRef.current += `\nCoach: ${text}`;
+                optionsRef.current.onTranscript?.({ role: "ai", text });
+                if (text.includes("[PROBLEM_SOLVED]")) {
+                  optionsRef.current.onProblemSolved?.();
                 }
               }
             } catch (e) {

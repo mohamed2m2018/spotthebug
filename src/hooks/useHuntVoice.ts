@@ -105,17 +105,21 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     console.log('[Hunt] 📹 Page capture stopped');
   }, []);
 
-  const startPageCapture = useCallback(async () => {
-    if (!sessionRef.current) return;
+  // Accept session as param to avoid race condition:
+  // onopen fires BEFORE sessionRef.current is set by ai.live.connect()
+  const startPageCapture = useCallback(async (liveSession: Session) => {
     const html2canvas = (await import('html2canvas')).default;
     setIsScreenSharing(true);
-    console.log('[Hunt] 📹 Starting automatic page capture at 1fps');
+    console.log('[Hunt] 📹 Starting automatic page capture (every 2s)');
 
+    let frameCount = 0;
     screenIntervalRef.current = setInterval(async () => {
-      if (!sessionRef.current) return;
+      // Use the passed session OR fallback to ref (for reconnects)
+      const activeSession = sessionRef.current || liveSession;
+      if (!activeSession) return;
       try {
         const canvas = await html2canvas(document.body, {
-          scale: 0.5, // half resolution for performance
+          scale: 0.5,
           logging: false,
           useCORS: true,
           width: window.innerWidth,
@@ -123,11 +127,17 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         });
         const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
         const base64Data = dataUrl.split(',')[1];
-        sessionRef.current.sendRealtimeInput({ video: { mimeType: 'image/jpeg', data: base64Data } });
-      } catch {
-        // Silently skip frames on error
+        frameCount++;
+        const sizeKB = Math.round(base64Data.length / 1024);
+        activeSession.sendRealtimeInput({ video: { mimeType: 'image/jpeg', data: base64Data } });
+        // Log every 5th frame for Cloud Run diagnostics
+        if (frameCount % 5 === 1) {
+          console.log(`[Hunt] 📹 Frame #${frameCount} sent — ${sizeKB}KB`);
+        }
+      } catch (err) {
+        console.warn('[Hunt] 📹 Frame capture error:', err);
       }
-    }, 2000); // 1 frame every 2 seconds for performance
+    }, 2000);
   }, []);
 
   // ── Stop Session ──
@@ -242,14 +252,16 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         hasBugContext: !!bugContext,
       });
 
-      // Helper: start mic + send bug context (called after setupComplete)
-      const startMicAndContext = async () => {
+      // Helper: start mic + send bug context
+      // Accept session as param to avoid race condition (onopen fires before sessionRef is set)
+      const startMicAndContext = async (liveSession: Session) => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
           });
           streamRef.current = stream;
           setIsRecording(true);
+          console.log('[Hunt] 🎤 Mic stream acquired');
 
           const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
           audioContextRef.current = ctx;
@@ -261,23 +273,25 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
           const nativeSampleRate = ctx.sampleRate;
 
           processor.onaudioprocess = (e) => {
-            if (!sessionRef.current) return;
+            const activeSession = sessionRef.current || liveSession;
+            if (!activeSession) return;
             const inputData = downsampleTo16k(e.inputBuffer.getChannelData(0), nativeSampleRate);
             const pcm16 = float32ToInt16(inputData);
             const base64Audio = arrayBufferToBase64(pcm16.buffer as ArrayBuffer);
             try {
-              sessionRef.current.sendRealtimeInput({ audio: { mimeType: "audio/pcm;rate=16000", data: base64Audio } });
+              activeSession.sendRealtimeInput({ audio: { mimeType: "audio/pcm;rate=16000", data: base64Audio } });
             } catch {
               sessionRef.current = null;
             }
           };
 
-          // Send bug context
+          // Send bug context — use liveSession directly (ref not set yet)
           const introText = bugContext
             ? buildHuntIntroPrompt(bugContext)
             : HUNT_INTRO_FALLBACK;
 
-          sessionRef.current?.sendClientContent({
+          console.log('[Hunt] 📝 Sending intro context to session');
+          liveSession.sendClientContent({
             turns: [{ role: "user", parts: [{ text: introText }] }],
             turnComplete: true,
           });
@@ -293,6 +307,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
           responseModalities: ["AUDIO"] as any,
           systemInstruction: HUNT_VOICE_SYSTEM_PROMPT,
           tools: [{ googleSearch: {} }],
+          outputAudioTranscription: {},
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
           } as any,
@@ -304,12 +319,14 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         },
         callbacks: {
           onopen: () => {
-            console.log("[Hunt] ✅ SDK Session Setup complete, starting mic...");
+            console.log("[Hunt] ✅ SDK Session opened — starting mic + page capture");
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.open');
             setIsConnected(true);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.setupComplete');
-            startMicAndContext();
-            startPageCapture();
+            // Pass session directly — sessionRef.current is NOT set yet at this point
+            // because ai.live.connect() hasn't resolved (this callback fires first)
+            startMicAndContext(session);
+            startPageCapture(session);
           },
           onmessage: async (response: any) => {
             try {
@@ -352,28 +369,17 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
                 }
               }
 
-              // AI transcript — only surface spoken text, not thinking tokens.
-              // Native audio model emits text-only parts as internal reasoning.
-              // We only show text that accompanies audio output (actual speech).
-              if (data.serverContent?.modelTurn?.parts) {
-                 const parts = data.serverContent.modelTurn.parts;
-                 const hasAudio = parts.some((p: any) => p.inlineData?.data || p.inlineData?.mimeType?.startsWith("audio/pcm"));
-
-                 // Only surface text when this turn also contains audio (spoken transcript)
-                 if (hasAudio) {
-                   for (const part of parts) {
-                     if (part.text) {
-                       const text = part.text;
-                       fullTranscriptRef.current += `\nCoach: ${text}`;
-                       traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
-                       optionsRef.current.onTranscript?.({ role: "ai", text });
-                       if (text.includes("[BUG_SOLVED]") || text.includes("[PROBLEM_SOLVED]")) {
-                         traceClient.traceEvent(traceSessionIdRef.current, 'hunt.bug.solved');
-                         optionsRef.current.onBugSolved?.();
-                       }
-                     }
-                   }
-                 }
+              // AI transcript — use outputTranscription API (clean spoken text only)
+              // This is separate from modelTurn.parts which contains thinking tokens.
+              if (data.serverContent?.outputTranscription?.text) {
+                const text = data.serverContent.outputTranscription.text;
+                fullTranscriptRef.current += `\nCoach: ${text}`;
+                traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
+                optionsRef.current.onTranscript?.({ role: "ai", text });
+                if (text.includes("[BUG_SOLVED]") || text.includes("[PROBLEM_SOLVED]")) {
+                  traceClient.traceEvent(traceSessionIdRef.current, 'hunt.bug.solved');
+                  optionsRef.current.onBugSolved?.();
+                }
               }
 
             } catch (e) {
@@ -443,6 +449,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
           responseModalities: ["AUDIO"] as any,
           systemInstruction: HUNT_VOICE_SYSTEM_PROMPT,
           tools: [{ googleSearch: {} }],
+          outputAudioTranscription: {},
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
           } as any,
@@ -477,13 +484,15 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
-                  if (part.text) {
-                    fullTranscriptRef.current += `\nCoach: ${part.text}`;
-                    optionsRef.current.onTranscript?.({ role: "ai", text: part.text });
-                    if (part.text.includes("[BUG_SOLVED]")) {
-                      optionsRef.current.onBugSolved?.();
-                    }
-                  }
+                }
+              }
+              // Transcript from outputTranscription API (clean spoken text only)
+              if (data.serverContent?.outputTranscription?.text) {
+                const text = data.serverContent.outputTranscription.text;
+                fullTranscriptRef.current += `\nCoach: ${text}`;
+                optionsRef.current.onTranscript?.({ role: "ai", text });
+                if (text.includes("[BUG_SOLVED]")) {
+                  optionsRef.current.onBugSolved?.();
                 }
               }
             } catch (e) {
@@ -511,10 +520,17 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     }
   };
 
+  // Wrap startPageCapture so external callers don't need session param
+  // (page capture auto-starts in onopen — this is for manual re-enable)
+  const startScreenShareWrapped = useCallback(async () => {
+    if (!sessionRef.current) return;
+    startPageCapture(sessionRef.current);
+  }, [startPageCapture]);
+
   return {
     isConnected, isRecording, isScreenSharing, isSpeaking, isReconnecting, isAiMuted,
     startSession, stopSession, toggleMicrophone, toggleAiAudio,
-    startScreenShare: startPageCapture, stopScreenShare: stopPageCapture,
+    startScreenShare: startScreenShareWrapped, stopScreenShare: stopPageCapture,
     sendText, sendCodeUpdate, postSessionReport
   };
 }
