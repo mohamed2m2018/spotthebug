@@ -8,7 +8,7 @@ import {
 import { GoogleGenAI } from "@google/genai";
 import type { Session } from "@google/genai";
 import { useAudioPlayback } from "@/hooks/useAudioPlayback";
-import { buildHuntIntroPrompt, HUNT_INTRO_FALLBACK } from "@/config/prompts";
+import { buildHuntIntroPrompt, HUNT_INTRO_FALLBACK, HUNT_VOICE_SYSTEM_PROMPT } from "@/config/prompts";
 import * as traceClient from "@/lib/traceClient";
 
 export interface VoiceTranscript {
@@ -26,6 +26,7 @@ interface UseHuntVoiceOptions {
 export interface UseHuntVoiceReturn {
   isConnected: boolean;
   isRecording: boolean;
+  isScreenSharing: boolean;
   isSpeaking: boolean;
   isReconnecting: boolean;
   isAiMuted: boolean;
@@ -33,6 +34,8 @@ export interface UseHuntVoiceReturn {
   stopSession: () => void;
   toggleMicrophone: () => void;
   toggleAiAudio: () => void;
+  startScreenShare: () => Promise<void>;
+  stopScreenShare: () => void;
   sendText: (text: string) => void;
   sendCodeUpdate: (code: string) => void;
   postSessionReport: any;
@@ -41,6 +44,7 @@ export interface UseHuntVoiceReturn {
 export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isAiMuted, setIsAiMuted] = useState(false);
   const [postSessionReport, setPostSessionReport] = useState<any>(null);
@@ -53,6 +57,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   const sessionRef = useRef<Session | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const screenIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -85,12 +90,50 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   }, []);
 
   const sendCodeUpdate = useCallback((code: string) => {
-    sendText(`[CODE_UPDATE] The developer edited the code:\n\`\`\`\n${code}\n\`\`\``);
+    console.log(`[Hunt] 📝 sendCodeUpdate fired — ${code.length} chars, session active: ${!!sessionRef.current}`);
+    sendText(`[CODE_UPDATE] The developer edited their code in the editor. Here is the COMPLETE current code:\n\`\`\`\n${code}\n\`\`\`\nReview the changes and respond.`);
   }, [sendText]);
+
+  // ── Automatic Page Capture (no permission dialog) ──
+
+  const stopPageCapture = useCallback(() => {
+    if (screenIntervalRef.current) {
+      clearInterval(screenIntervalRef.current);
+      screenIntervalRef.current = null;
+    }
+    setIsScreenSharing(false);
+    console.log('[Hunt] 📹 Page capture stopped');
+  }, []);
+
+  const startPageCapture = useCallback(async () => {
+    if (!sessionRef.current) return;
+    const html2canvas = (await import('html2canvas')).default;
+    setIsScreenSharing(true);
+    console.log('[Hunt] 📹 Starting automatic page capture at 1fps');
+
+    screenIntervalRef.current = setInterval(async () => {
+      if (!sessionRef.current) return;
+      try {
+        const canvas = await html2canvas(document.body, {
+          scale: 0.5, // half resolution for performance
+          logging: false,
+          useCORS: true,
+          width: window.innerWidth,
+          height: window.innerHeight,
+        });
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        const base64Data = dataUrl.split(',')[1];
+        sessionRef.current.sendRealtimeInput({ video: { mimeType: 'image/jpeg', data: base64Data } });
+      } catch {
+        // Silently skip frames on error
+      }
+    }, 2000); // 1 frame every 2 seconds for performance
+  }, []);
 
   // ── Stop Session ──
 
   const stopSession = useCallback(() => {
+    stopPageCapture();
     processorRef.current?.disconnect();
     processorRef.current = null;
     streamRef.current?.getTracks().forEach(t => t.stop());
@@ -108,19 +151,33 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     }
 
     if (fullTranscriptRef.current) {
+      const transcript = fullTranscriptRef.current;
+      fullTranscriptRef.current = ""; // Reset for next session
+
+      // Timeout: if ADK takes longer than 20s, show error state
+      const timeoutId = setTimeout(() => {
+        setPostSessionReport({ error: "Summary timed out. Your session data is safe." });
+      }, 20_000);
+
       // Send the session transcript to our ADK backend for evaluation
       fetch('/api/summarize-session', {
         method: 'POST',
-        body: JSON.stringify({ transcript: fullTranscriptRef.current }),
+        body: JSON.stringify({ transcript }),
         headers: { 'Content-Type': 'application/json' }
       })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        return res.json();
+      })
       .then(data => {
+        clearTimeout(timeoutId);
         setPostSessionReport(data);
       })
-      .catch(err => console.error("[Hunt] Failed to get session summary:", err));
-      
-      fullTranscriptRef.current = ""; // Reset for next session
+      .catch(err => {
+        clearTimeout(timeoutId);
+        console.error("[Hunt] Failed to get session summary:", err);
+        setPostSessionReport({ error: err.message || "Failed to generate summary" });
+      });
     }
   }, [flushAudioQueue]);
 
@@ -234,6 +291,8 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
         config: {
           responseModalities: ["AUDIO"] as any,
+          systemInstruction: HUNT_VOICE_SYSTEM_PROMPT,
+          tools: [{ googleSearch: {} }],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
           } as any,
@@ -250,6 +309,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
             setIsConnected(true);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.setupComplete');
             startMicAndContext();
+            startPageCapture();
           },
           onmessage: async (response: any) => {
             try {
@@ -381,6 +441,8 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
         config: {
           responseModalities: ["AUDIO"] as any,
+          systemInstruction: HUNT_VOICE_SYSTEM_PROMPT,
+          tools: [{ googleSearch: {} }],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
           } as any,
@@ -450,8 +512,9 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   };
 
   return {
-    isConnected, isRecording, isSpeaking, isReconnecting, isAiMuted,
+    isConnected, isRecording, isScreenSharing, isSpeaking, isReconnecting, isAiMuted,
     startSession, stopSession, toggleMicrophone, toggleAiAudio,
+    startScreenShare: startPageCapture, stopScreenShare: stopPageCapture,
     sendText, sendCodeUpdate, postSessionReport
   };
 }

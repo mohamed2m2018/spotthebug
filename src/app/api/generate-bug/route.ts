@@ -48,9 +48,10 @@ Use Google Search to find REAL, common bug patterns for ${framework}. Base your 
 ${excludeTopics.length > 0 ? `Avoid these topics (already used): ${excludeTopics.join(", ")}` : ""}
 
 Requirements:
-- The buggy code should be 6-15 lines, focused on ONE bug
+- The buggy code should be 6-20 lines, focused on ONE bug
 - The bug must be realistic — something a real developer would write
-- Include the correct fix
+- The buggy code must look like NATURAL code — NO comments that hint at or reveal the bug. No "// BUG:", no "// This won't work", no "// Wrong approach" etc. The code should look like it was written by a developer who genuinely thinks it's correct
+- Include the correct fix separately
 - Include 3 progressive hints (vague → specific → almost the answer)
 - Include a technical explanation of WHY it's a bug (reference the underlying mechanism)
 - Specify the language: "tsx" for React, "javascript" for Node.js, "typescript" for TypeScript, "python" for Python
@@ -103,7 +104,11 @@ Original bug:
 ${groundedBug}
 
 Validation:
-${validationText}`,
+${validationText}
+
+CRITICAL for buggyCode and correctFix fields: These must be properly formatted multi-line code strings. Use literal newline characters (\n) to separate lines. Each line of code must be on its own line, with proper indentation using spaces. Example of correct format in JSON: "function foo() {\n  const x = 1;\n  return x;\n}"
+
+A single-line format like "import React from 'react';function Foo() { ... }" is UNACCEPTABLE — it makes the code unreadable.`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -114,12 +119,12 @@ ${validationText}`,
                 difficulty: { type: "string" as const },
                 title: { type: "string" as const },
                 description: { type: "string" as const },
-                buggyCode: { type: "string" as const },
+                buggyCode: { type: "string" as const, description: "Multi-line buggy code with proper newline characters between each line. Must be readable, properly indented code — not a single line. CRITICAL: The code must contain NO comments that hint at or reveal the bug. No '// BUG:', no '// This won't work', no explanatory comments about what's wrong. The code should look like a developer genuinely wrote it thinking it's correct." },
                 language: { type: "string" as const },
                 hint1: { type: "string" as const },
                 hint2: { type: "string" as const },
                 hint3: { type: "string" as const },
-                correctFix: { type: "string" as const },
+                correctFix: { type: "string" as const, description: "Multi-line corrected code with proper newline characters between each line. Same formatting rules as buggyCode." },
                 explanation: { type: "string" as const },
               },
               required: ["framework", "category", "difficulty", "title", "description", "buggyCode", "language", "hint1", "hint2", "hint3", "correctFix", "explanation"],

@@ -15,6 +15,8 @@ interface BugData {
   title: string;
   buggyCode: string;
   language: string;
+  correctFix: string;
+  explanation: string;
 }
 
 interface Message {
@@ -48,6 +50,8 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const seenBugIds = useRef<string[]>([]);
   const autoLoadRef = useRef<NodeJS.Timeout | null>(null);
   const mountedRef = useRef(false); // StrictMode guard
+  const [evalStatus, setEvalStatus] = useState<'idle' | 'evaluating' | 'correct' | 'incorrect'>('idle');
+  const [evalFeedback, setEvalFeedback] = useState('');
 
   // ── Transcript handler ──
   const handleTranscript = useCallback((transcript: VoiceTranscript) => {
@@ -122,13 +126,76 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const handleCodeEdit = (newCode: string) => {
     setEditedCode(newCode);
     if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
-    codeUpdateTimerRef.current = setTimeout(() => sendCodeUpdate(newCode), 2000);
+    codeUpdateTimerRef.current = setTimeout(async () => {
+      sendCodeUpdate(newCode);
+      // Run grounded evaluation if we have bug data
+      if (!bug) return;
+      setEvalStatus('evaluating');
+      setEvalFeedback('');
+      try {
+        const res = await fetch('/api/evaluate-fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            buggyCode: bug.buggyCode,
+            correctFix: bug.correctFix,
+            explanation: bug.explanation,
+            userCode: newCode,
+            language: bug.language,
+          }),
+        });
+        const data = await res.json();
+        const status = data.isCorrect ? 'correct' : 'incorrect';
+        setEvalStatus(status);
+        setEvalFeedback(data.feedback || '');
+        // Send grounded evaluation to voice session so AI coach reacts to verified facts
+        const tag = data.isCorrect ? '✅ CORRECT' : '❌ INCORRECT';
+        sendText(`[CODE_EVALUATION] Grounded analysis result: ${tag}. ${data.feedback}${data.searchUsed ? ' (verified via Google Search)' : ''}`);
+      } catch {
+        setEvalStatus('idle');
+      }
+    }, 2000);
   };
 
   const handleEnd = () => {
     stopSession();
     if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
     setShowSummary(true);
+  };
+
+  const handleRestart = () => {
+    if (!bug) return;
+    // Stop current voice session
+    stopSession();
+    if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
+    if (autoLoadRef.current) clearTimeout(autoLoadRef.current);
+
+    // Reset UI state but keep the same bug
+    setEditedCode(bug.buggyCode);
+    setMessages([]);
+    setTimer(300);
+    setSolvedCount(0);
+    setShowSolvedBanner(false);
+    setShowSummary(false);
+    setStarted(false);
+    setIsLoading(true);
+    setProgressMessage("🔄 Restarting session with the same bug...");
+    setProgressPercent(50);
+
+    // Start a fresh voice session with the same bug context
+    const bugContext = `\`\`\`${bug.language}\n${bug.buggyCode}\n\`\`\`\nFramework: ${bug.framework}\nCategory: ${bug.category}\n\n[HIDDEN GROUND TRUTH - DO NOT REVEAL TO USER]\nCorrect Fix:\n${bug.correctFix}\n\nExplanation:\n${bug.explanation}`;
+    startSession(bugContext)
+      .then(() => {
+        setStarted(true);
+        setMessages([{ role: "ai", text: "🎙️ Session restarted! Same bug, fresh start. Speak or type below." }]);
+      })
+      .catch((error) => {
+        console.error("Failed to restart:", error);
+        setMessages([{ role: "ai", text: "Failed to restart. Try again." }]);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
   };
 
   const startHuntSession = async () => {
@@ -186,7 +253,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
       seenBugIds.current.push(bugData.id);
       setMessages([{ role: "ai", text: "🎙️ Voice session started! Speak or type below." }]);
 
-      const bugContext = `\`\`\`${bugData.language}\n${bugData.buggyCode}\n\`\`\`\nFramework: ${bugData.framework}\nCategory: ${bugData.category}`;
+      const bugContext = `\`\`\`${bugData.language}\n${bugData.buggyCode}\n\`\`\`\nFramework: ${bugData.framework}\nCategory: ${bugData.category}\n\n[HIDDEN GROUND TRUTH - DO NOT REVEAL TO USER]\nCorrect Fix:\n${bugData.correctFix}\n\nExplanation:\n${bugData.explanation}`;
       await startSession(bugContext);
       setStarted(true);
     } catch (error) {
@@ -252,7 +319,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
       seenBugIds.current.push(bugData.id);
       setMessages(prev => [...prev, { role: "ai", text: "🐛 New bug loaded!" }]);
 
-      const bugContext = `\`\`\`${bugData.language}\n${bugData.buggyCode}\n\`\`\`\nFramework: ${bugData.framework}\nCategory: ${bugData.category}`;
+      const bugContext = `\`\`\`${bugData.language}\n${bugData.buggyCode}\n\`\`\`\nFramework: ${bugData.framework}\nCategory: ${bugData.category}\n\n[HIDDEN GROUND TRUTH - DO NOT REVEAL TO USER]\nCorrect Fix:\n${bugData.correctFix}\n\nExplanation:\n${bugData.explanation}`;
       sendText(`[NEW_BUG] New buggy code:\n\n${bugContext}\n\nIntroduce it. Don't reveal the bug. Include [BUG_SOLVED] when they find it.`);
     } catch {
       setMessages(prev => [...prev, { role: "ai", text: "No more bugs available! Great job!" }]);
@@ -285,8 +352,9 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   }
 
   if (showSummary) {
+    const hasError = postSessionReport?.error;
     let summaryData = null;
-    if (postSessionReport) {
+    if (postSessionReport && !hasError) {
       try {
         // the ADK returns results which contains an array, the last event is agent_response
         // We look for 'content' in the object, or assume the report might be raw json text
@@ -310,6 +378,32 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
             <div style={{ textAlign: 'center', padding: '40px' }}>
               <div className={styles.loadingPulse} style={{ fontSize: '3rem', marginBottom: '1rem' }}>🤖</div>
               <p className={styles.setupSubtitle}>Google ADK is analyzing your session...</p>
+              <div style={{ marginTop: '24px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                <button className={styles.restartBtn} onClick={handleRestart} style={{ fontSize: '14px', padding: '10px 24px' }}>
+                  🔄 Restart Same Bug
+                </button>
+                <button className={styles.endSessionBtn} onClick={onEnd} style={{ fontSize: '14px', padding: '10px 24px' }}>
+                  Back to Menu
+                </button>
+              </div>
+            </div>
+          ) : hasError ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '20px' }}>
+              <div style={{ background: 'rgba(239, 68, 68, 0.08)', borderLeft: '4px solid #ef4444', padding: '16px', borderRadius: '4px' }}>
+                <h3 style={{ color: '#ef4444', margin: '0 0 8px 0', fontSize: '16px' }}>⚠️ Summary unavailable</h3>
+                <p style={{ margin: 0, color: 'var(--color-text-secondary)', fontSize: '14px' }}>{postSessionReport.error}</p>
+              </div>
+              <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '13px', textAlign: 'center' }}>
+                Your practice session was still valuable! You solved {solvedCount} bug{solvedCount !== 1 ? 's' : ''}.
+              </p>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                <button className={styles.restartBtn} onClick={handleRestart} style={{ minWidth: '160px', fontSize: '16px', padding: '12px' }}>
+                  🔄 Restart Same Bug
+                </button>
+                <button className={styles.endSessionBtn} onClick={onEnd} style={{ minWidth: '160px', fontSize: '16px', padding: '12px' }}>
+                  Back to Menu
+                </button>
+              </div>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '20px' }}>
@@ -339,8 +433,11 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
                 </div>
               )}
 
-              <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center' }}>
-                <button className={styles.endSessionBtn} onClick={onEnd} style={{ minWidth: '200px', fontSize: '16px', padding: '12px' }}>
+              <div style={{ marginTop: '20px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                <button className={styles.restartBtn} onClick={handleRestart} style={{ minWidth: '160px', fontSize: '16px', padding: '12px' }}>
+                  🔄 Restart Same Bug
+                </button>
+                <button className={styles.endSessionBtn} onClick={onEnd} style={{ minWidth: '160px', fontSize: '16px', padding: '12px' }}>
                   Back to Menu
                 </button>
               </div>
@@ -359,6 +456,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
           <div className={styles.sessionControls}>
             {solvedCount > 0 && <span className={styles.solvedCounter}>✅ {solvedCount} solved</span>}
             <span className={styles.timer}>{Math.floor(timer / 60)}:{(timer % 60).toString().padStart(2, "0")}</span>
+            <button className={styles.restartBtn} onClick={handleRestart}>🔄 Restart</button>
             <button className={styles.endSessionBtn} onClick={handleEnd}>End Session</button>
           </div>
         </nav>
@@ -385,8 +483,26 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
               value={editedCode}
               onChange={handleCodeEdit}
               language={bug?.language}
+              noValidation
             />
           </div>
+          {evalStatus !== 'idle' && (
+            <div style={{
+              padding: '8px 16px',
+              fontSize: '13px',
+              fontWeight: 500,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              borderTop: '1px solid rgba(255,255,255,0.1)',
+              background: evalStatus === 'correct' ? 'rgba(34,197,94,0.1)' : evalStatus === 'incorrect' ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.05)',
+              color: evalStatus === 'correct' ? '#22c55e' : evalStatus === 'incorrect' ? '#ef4444' : '#aaa',
+            }}>
+              {evalStatus === 'evaluating' && '🔍 Verifying your fix with Google Search...'}
+              {evalStatus === 'correct' && `✅ ${evalFeedback}`}
+              {evalStatus === 'incorrect' && `❌ ${evalFeedback}`}
+            </div>
+          )}
         </div>
 
         <div className={styles.voicePanel}>

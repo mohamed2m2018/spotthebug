@@ -11,11 +11,11 @@ export default function Home() {
             <span>Spot<span className={styles.logoHighlight}>TheBug</span></span>
           </a>
           <ul className={styles.navLinks}>
-            <li><a href="#how-it-works">How It Works</a></li>
-            <li><a href="#pricing">Pricing</a></li>
+            <li><a href="#how-it-works">Three Modes</a></li>
+            <li><a href="#tech-stack">Tech Stack</a></li>
           </ul>
           <a href="/login" className={`${styles.navCta} btn btn-primary`}>
-            Start Training — Free
+            🎙️ Try It Live
           </a>
         </nav>
       </header>
@@ -28,7 +28,7 @@ export default function Home() {
         <div className={styles.heroContent}>
           <div className={styles.heroBadge}>
             <span className={styles.heroBadgeDot} />
-            AI-Powered Voice Training
+            Powered by Gemini Live API
           </div>
 
           <h1 className={styles.heroTitle}>
@@ -38,9 +38,9 @@ export default function Home() {
           </h1>
 
           <p className={styles.heroSubtitle}>
-            Train your code review skills with an AI voice mentor.
-            Real bugs from open source projects. Real voice conversations.
-            Sharpen the #1 skill companies need.
+            The voice-first AI platform that coaches developers through real-time
+            conversations. See, hear, and speak — with native audio, live screen
+            vision, and code execution.
           </p>
 
           <div className={styles.heroCtas}>
@@ -54,16 +54,16 @@ export default function Home() {
 
           <div className={styles.heroStats}>
             <div className={styles.stat}>
-              <div className={styles.statValue}>150K+</div>
-              <div className={styles.statLabel}>Real Bug Reports</div>
+              <div className={styles.statValue}>3 Modes</div>
+              <div className={styles.statLabel}>Hunt · Pair · Solve</div>
             </div>
             <div className={styles.stat}>
-              <div className={styles.statValue}>5 min</div>
-              <div className={styles.statLabel}>Free Daily Session</div>
+              <div className={styles.statValue}>Real-Time</div>
+              <div className={styles.statLabel}>Native Audio Voice</div>
             </div>
             <div className={styles.stat}>
-              <div className={styles.statValue}>Voice AI</div>
-              <div className={styles.statLabel}>Real Conversations</div>
+              <div className={styles.statValue}>Live Vision</div>
+              <div className={styles.statLabel}>Screen + Code Access</div>
             </div>
           </div>
         </div>
@@ -114,117 +114,158 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ========== How It Works ========== */}
+      {/* ========== Three Modes ========== */}
       <section id="how-it-works" className={styles.howItWorks}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionTag}>How It Works</div>
+          <div className={styles.sectionTag}>Three Modes</div>
           <h2 className={styles.sectionTitle}>
-            A Voice Mentor That{" "}
-            <span className="gradient-text">Coaches You</span>
+            Choose How You{" "}
+            <span className="gradient-text">Level Up</span>
           </h2>
           <p className={styles.sectionSubtitle}>
-            Not a quiz. Not an interview. A supportive AI coach that helps you build real code review skills.
+            Not a quiz. Not an interview. Real voice conversations with an AI mentor —
+            powered by Gemini Live API.
           </p>
         </div>
 
-        <div className={styles.steps}>
-          <div className={styles.step}>
-            <div className={styles.stepNumber}>1</div>
-            <div className={styles.stepIcon}>🎯</div>
-            <h3 className={styles.stepTitle}>Tell Your Skills</h3>
-            <p className={styles.stepDesc}>
-              React? Node.js? Python? The AI picks bugs from your actual tech stack.
+        <div className={styles.modesGrid}>
+          {/* Bug Hunt */}
+          <div className={`${styles.modeCard} ${styles.modeCardHunt}`}>
+            <div className={styles.modeCardIcon}>🔍</div>
+            <h3 className={styles.modeCardTitle}>Bug Hunt</h3>
+            <p className={styles.modeCardDesc}>
+              Find real-world bugs in curated code. The AI voice coach guides you with progressive
+              hints — never gives the answer.
             </p>
+            <ul className={styles.modeCardFeatures}>
+              <li>AI-generated bugs from real open-source patterns</li>
+              <li>Voice conversation with interruption support</li>
+              <li>Post-session AI evaluation via Google ADK</li>
+              <li>Progressive difficulty across frameworks</li>
+            </ul>
+            <div className={styles.modeCardTech}>
+              <span className={styles.techTag}>Gemini Live API</span>
+              <span className={styles.techTag}>Google ADK</span>
+            </div>
           </div>
-          <div className={styles.step}>
-            <div className={styles.stepNumber}>2</div>
-            <div className={styles.stepIcon}>👀</div>
-            <h3 className={styles.stepTitle}>Review Real Code</h3>
-            <p className={styles.stepDesc}>
-              Real bugs from real open source projects appear on screen. Take your time to understand.
+
+          {/* Pair Programming */}
+          <div className={`${styles.modeCard} ${styles.modeCardPair}`}>
+            <div className={styles.modeCardPopular}>★ Most Advanced</div>
+            <div className={styles.modeCardIcon}>🤝</div>
+            <h3 className={styles.modeCardTitle}>Pair with AI</h3>
+            <p className={styles.modeCardDesc}>
+              Share your screen and get a real-time voice code review. The AI sees your code,
+              reads your files, and teaches like a senior engineer.
             </p>
+            <ul className={styles.modeCardFeatures}>
+              <li>Live screen sharing with 1fps vision</li>
+              <li>Reads workspace files via function calling</li>
+              <li>Git diff analysis with pre-session code review</li>
+              <li>Floating PiP desktop widget</li>
+            </ul>
+            <div className={styles.modeCardTech}>
+              <span className={styles.techTag}>Screen Share</span>
+              <span className={styles.techTag}>Function Calling</span>
+              <span className={styles.techTag}>Google Search</span>
+            </div>
           </div>
-          <div className={styles.step}>
-            <div className={styles.stepNumber}>3</div>
-            <h3 className={styles.stepTitle}>Discuss via Voice</h3>
-            <div className={styles.stepIcon}>🎙️</div>
-            <p className={styles.stepDesc}>
-              Talk through what you see. The AI guides you with hints — never just gives the answer.
+
+          {/* Problem Solve */}
+          <div className={`${styles.modeCard} ${styles.modeCardSolve}`}>
+            <div className={styles.modeCardIcon}>🧩</div>
+            <h3 className={styles.modeCardTitle}>Problem Solve</h3>
+            <p className={styles.modeCardDesc}>
+              Tackle coding challenges with AI coaching. Write your solution, run tests in a
+              real sandbox, and get voice guidance.
             </p>
-          </div>
-          <div className={styles.step}>
-            <div className={styles.stepNumber}>4</div>
-            <div className={styles.stepIcon}>🚀</div>
-            <h3 className={styles.stepTitle}>Level Up</h3>
-            <p className={styles.stepDesc}>
-              Get a session summary, track your progress, and build real code review instincts.
-            </p>
+            <ul className={styles.modeCardFeatures}>
+              <li>Unique challenges grounded via Google Search</li>
+              <li>Sandboxed code execution with real test cases</li>
+              <li>Progressive hints and voice coaching</li>
+              <li>Multi-language support (JS, Python, Go, Rust)</li>
+            </ul>
+            <div className={styles.modeCardTech}>
+              <span className={styles.techTag}>Code Execution</span>
+              <span className={styles.techTag}>Google Search</span>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ========== Pricing ========== */}
-      <section id="pricing" className={styles.pricing}>
+      {/* ========== Tech Stack ========== */}
+      <section id="tech-stack" className={styles.pricing}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionTag}>Pricing</div>
+          <div className={styles.sectionTag}>Tech Stack</div>
           <h2 className={styles.sectionTitle}>
-            Start <span className="gradient-text">Free</span>, Level Up When Ready
+            Powered by{" "}
+            <span className="gradient-text">Google AI</span>
           </h2>
           <p className={styles.sectionSubtitle}>
-            Try it free. No credit card required. Upgrade when you see the value.
+            Built on Google&apos;s most advanced multimodal AI platform — from real-time
+            voice to cloud deployment.
           </p>
         </div>
 
-        <div className={styles.pricingGrid}>
-          {/* Free Tier */}
-          <div className={styles.pricingCard}>
-            <div className={styles.pricingName}>Free</div>
-            <div className={styles.pricingPrice}>$0</div>
-            <div className={styles.pricingPeriod}>forever</div>
-            <ul className={styles.pricingFeatures}>
-              <li>1 session per day</li>
-              <li>5 minutes per session</li>
-              <li>3 code review rounds</li>
-              <li>Basic feedback</li>
-            </ul>
-            <a href="/login" className={`${styles.pricingCta} btn btn-secondary`}>
-              Get Started Free
-            </a>
+        <div className={styles.techGrid}>
+          <div className={styles.techCard}>
+            <div className={styles.techCardIcon}>🎙️</div>
+            <h3 className={styles.techCardTitle}>Gemini Live API</h3>
+            <p className={styles.techCardDesc}>
+              Real-time bidirectional voice with native audio generation.
+              Interruptible conversations — not text-to-speech.
+            </p>
+            <div className={styles.techCardModel}>gemini-2.5-flash-native-audio</div>
           </div>
 
-          {/* Pro Tier */}
-          <div className={`${styles.pricingCard} ${styles.pricingCardPopular}`}>
-            <div className={styles.popularBadge}>Most Popular</div>
-            <div className={styles.pricingName}>Pro</div>
-            <div className={styles.pricingPrice}>$14.99</div>
-            <div className={styles.pricingPeriod}>per month</div>
-            <ul className={styles.pricingFeatures}>
-              <li>20 sessions per month</li>
-              <li>30 minutes per session</li>
-              <li>All topics & frameworks</li>
-              <li>Full progress tracking</li>
-              <li>Session history & insights</li>
-            </ul>
-            <a href="/login" className={`${styles.pricingCta} btn btn-primary`}>
-              Start Pro Trial
-            </a>
+          <div className={styles.techCard}>
+            <div className={styles.techCardIcon}>👁️</div>
+            <h3 className={styles.techCardTitle}>Multimodal Vision</h3>
+            <p className={styles.techCardDesc}>
+              Live screen capture at 1fps sent as JPEG frames.
+              The AI sees and understands your code in real-time.
+            </p>
+            <div className={styles.techCardModel}>Audio + Vision + Text</div>
           </div>
 
-          {/* Team Tier */}
-          <div className={styles.pricingCard}>
-            <div className={styles.pricingName}>Team</div>
-            <div className={styles.pricingPrice}>$11.99</div>
-            <div className={styles.pricingPeriod}>per user / month</div>
-            <ul className={styles.pricingFeatures}>
-              <li>30 sessions per user / month</li>
-              <li>Team skill dashboard</li>
-              <li>Manager reports</li>
-              <li>5-20 developers</li>
-              <li>Priority support</li>
-            </ul>
-            <a href="/login" className={`${styles.pricingCta} btn btn-secondary`}>
-              Contact Sales
-            </a>
+          <div className={styles.techCard}>
+            <div className={styles.techCardIcon}>🤖</div>
+            <h3 className={styles.techCardTitle}>Google ADK</h3>
+            <p className={styles.techCardDesc}>
+              Agent Development Kit evaluates session transcripts
+              post-session for structured performance analysis.
+            </p>
+            <div className={styles.techCardModel}>Agent Development Kit</div>
+          </div>
+
+          <div className={styles.techCard}>
+            <div className={styles.techCardIcon}>🔧</div>
+            <h3 className={styles.techCardTitle}>Function Calling</h3>
+            <p className={styles.techCardDesc}>
+              AI reads workspace files via the readFile tool.
+              Direct filesystem access during live voice sessions.
+            </p>
+            <div className={styles.techCardModel}>Tool Use (readFile)</div>
+          </div>
+
+          <div className={styles.techCard}>
+            <div className={styles.techCardIcon}>🔍</div>
+            <h3 className={styles.techCardTitle}>Google Search</h3>
+            <p className={styles.techCardDesc}>
+              Grounding tool ensures generated bugs and coding challenges
+              are based on real-world patterns and documentation.
+            </p>
+            <div className={styles.techCardModel}>Search Grounding</div>
+          </div>
+
+          <div className={styles.techCard}>
+            <div className={styles.techCardIcon}>☁️</div>
+            <h3 className={styles.techCardTitle}>Google Cloud Run</h3>
+            <p className={styles.techCardDesc}>
+              Containerized Next.js deployment with multi-stage Docker build.
+              Langfuse + OpenTelemetry for end-to-end tracing.
+            </p>
+            <div className={styles.techCardModel}>Cloud Run + OTel</div>
           </div>
         </div>
       </section>
@@ -236,8 +277,8 @@ export default function Home() {
             © {new Date().getFullYear()} SpotTheBug.ai — Train smarter, code better.
           </div>
           <ul className={styles.footerLinks}>
-            <li><a href="#how-it-works">How It Works</a></li>
-            <li><a href="#pricing">Pricing</a></li>
+            <li><a href="#how-it-works">Three Modes</a></li>
+            <li><a href="#tech-stack">Tech Stack</a></li>
           </ul>
         </div>
       </footer>

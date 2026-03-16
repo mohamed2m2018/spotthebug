@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef } from "react";
-import Editor, { type OnMount } from "@monaco-editor/react";
+import Editor, { type OnMount, type BeforeMount } from "@monaco-editor/react";
 
 /**
  * Map bug language strings to Monaco language IDs.
@@ -32,6 +32,8 @@ interface CodeEditorProps {
   readOnly?: boolean;
   /** Minimum height in pixels */
   minHeight?: number;
+  /** Disable all language diagnostics (red squiggles). Used in Bug Hunt mode where code fragments aren't meant to compile. */
+  noValidation?: boolean;
 }
 
 export default function CodeEditor({
@@ -40,6 +42,7 @@ export default function CodeEditor({
   language = "javascript",
   readOnly = false,
   minHeight,
+  noValidation = false,
 }: CodeEditorProps) {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
@@ -48,6 +51,18 @@ export default function CodeEditor({
     // Focus editor on mount for immediate typing
     if (!readOnly) editor.focus();
   }, [readOnly]);
+
+  // Disable all TS/JS diagnostics before Monaco initializes (prevents red squiggles on code fragments)
+  const handleBeforeMount: BeforeMount = useCallback((monaco) => {
+    if (!noValidation) return;
+    const diagnosticsOff = {
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+      noSuggestionDiagnostics: true,
+    };
+    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions(diagnosticsOff);
+    monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions(diagnosticsOff);
+  }, [noValidation]);
 
   const handleChange = useCallback(
     (val: string | undefined) => {
@@ -60,6 +75,7 @@ export default function CodeEditor({
 
   return (
     <Editor
+      beforeMount={handleBeforeMount}
       height={minHeight ? `${minHeight}px` : "100%"}
       language={monacoLanguage}
       value={value}

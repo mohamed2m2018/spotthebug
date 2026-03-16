@@ -262,104 +262,63 @@
 }
 
 /* ==========================================
-   How It Works Section
+   Three Modes Section
    ========================================== */
 .howItWorks {
   padding: var(--space-4xl) var(--space-xl);
 }
 
-.steps {
+.modesGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--space-xl);
   max-width: var(--max-width);
   margin: 0 auto;
 }
 
-.step {
-  text-align: center;
-  padding: var(--space-xl);
+@media (max-width: 960px) {
+  .modesGrid {
+    grid-template-columns: 1fr;
+    max-width: 500px;
+  }
+}
+
+.modeCard {
+  padding: var(--space-2xl);
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   position: relative;
   transition: all var(--transition-base);
-}
-
-.step:hover {
-  border-color: var(--color-primary);
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-glow-primary);
-}
-
-.stepNumber {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--color-primary), #d35400);
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 1.1rem;
-  margin: 0 auto var(--space-lg);
-}
-
-.stepIcon {
-  font-size: 2rem;
-  margin-bottom: var(--space-sm);
-}
-
-.stepTitle {
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin-bottom: var(--space-sm);
-}
-
-.stepDesc {
-  font-size: 0.9rem;
-  color: var(--color-text-secondary);
-  line-height: 1.5;
-}
-
-/* ==========================================
-   Pricing Section
-   ========================================== */
-.pricing {
-  padding: var(--space-4xl) var(--space-xl);
-  background: var(--color-bg-elevated);
-}
-
-.pricingGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: var(--space-lg);
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-.pricingCard {
-  background: var(--color-bg-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2xl);
   display: flex;
   flex-direction: column;
-  transition: all var(--transition-base);
 }
 
-.pricingCard:hover {
-  transform: translateY(-4px);
+.modeCard:hover {
+  transform: translateY(-6px);
 }
 
-.pricingCardPopular {
+.modeCardHunt:hover {
+  border-color: #22c55e;
+  box-shadow: 0 0 40px rgba(34, 197, 94, 0.12);
+}
+
+.modeCardPair {
   border-color: var(--color-primary);
   box-shadow: var(--shadow-glow-primary);
-  position: relative;
 }
 
-.popularBadge {
+.modeCardPair:hover {
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 40px rgba(240, 160, 75, 0.2);
+}
+
+.modeCardSolve:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 0 40px rgba(59, 130, 246, 0.12);
+}
+
+.modeCardPopular {
   position: absolute;
   top: -12px;
   left: 50%;
@@ -375,52 +334,141 @@
   white-space: nowrap;
 }
 
-.pricingName {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--color-text-secondary);
+.modeCardIcon {
+  font-size: 2.5rem;
   margin-bottom: var(--space-md);
 }
 
-.pricingPrice {
-  font-size: 2.5rem;
-  font-weight: 800;
-  margin-bottom: var(--space-xs);
+.modeCardTitle {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-bottom: var(--space-sm);
 }
 
-.pricingPeriod {
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-  margin-bottom: var(--space-xl);
+.modeCardDesc {
+  font-size: 0.95rem;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  margin-bottom: var(--space-lg);
 }
 
-.pricingFeatures {
+.modeCardFeatures {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
-  margin-bottom: var(--space-2xl);
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xl);
   flex: 1;
 }
 
-.pricingFeatures li {
+.modeCardFeatures li {
   display: flex;
   align-items: flex-start;
   gap: var(--space-sm);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   color: var(--color-text-secondary);
+  line-height: 1.4;
 }
 
-.pricingFeatures li::before {
+.modeCardFeatures li::before {
   content: "✓";
   color: var(--color-success);
   font-weight: 700;
   flex-shrink: 0;
 }
 
-.pricingCta {
-  width: 100%;
-  text-align: center;
+.modeCardTech {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: auto;
+}
+
+.techTag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ==========================================
+   Tech Stack Section
+   ========================================== */
+.pricing {
+  padding: var(--space-4xl) var(--space-xl);
+  background: var(--color-bg-elevated);
+}
+
+.techGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-lg);
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+@media (max-width: 960px) {
+  .techGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .techGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.techCard {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  transition: all var(--transition-base);
+  display: flex;
+  flex-direction: column;
+}
+
+.techCard:hover {
+  border-color: var(--color-primary);
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-glow-primary);
+}
+
+.techCardIcon {
+  font-size: 2rem;
+  margin-bottom: var(--space-md);
+}
+
+.techCardTitle {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: var(--space-sm);
+}
+
+.techCardDesc {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  flex: 1;
+  margin-bottom: var(--space-md);
+}
+
+.techCardModel {
+  font-family: var(--font-mono, 'Fira Code', monospace);
+  font-size: 0.7rem;
+  color: var(--color-primary-light);
+  background: rgba(240, 160, 75, 0.08);
+  border: 1px solid rgba(240, 160, 75, 0.15);
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  display: inline-block;
+  width: fit-content;
 }
 
 /* ==========================================

@@ -77,6 +77,23 @@
   border-color: var(--color-danger);
 }
 
+.restartBtn {
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(230, 126, 34, 0.3);
+  background: rgba(230, 126, 34, 0.08);
+  color: var(--color-primary-light);
+}
+
+.restartBtn:hover {
+  background: rgba(230, 126, 34, 0.18);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 12px rgba(230, 126, 34, 0.15);
+}
+
 /* Main Layout */
 .sessionMain {
   flex: 1;

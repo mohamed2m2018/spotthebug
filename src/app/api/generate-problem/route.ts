@@ -106,7 +106,14 @@ ${groundedProblem}
 Validation:
 ${validationText}
 
-Language: ${language}`,
+Language: ${language}
+
+IMPORTANT for starterCode: The starter code must be properly formatted multi-line code. Place the function signature on line 1, a placeholder comment like "// Your code here" on its own indented line inside the function body, and the closing brace on a separate final line. Example format:
+function exampleFn(param) {
+  // Your code here
+}
+
+This ensures the code is valid syntax. A single-line format like "function fn(arr) { // comment }" is INVALID because the inline comment swallows the closing brace.`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -130,7 +137,7 @@ Language: ${language}`,
                     required: ["input", "output"],
                   },
                 },
-                starterCode: { type: "string" as const },
+                starterCode: { type: "string" as const, description: "Multi-line starter code with function signature. The body contains a '// Your code here' comment on its own line, and the closing brace on a separate final line. Must be valid syntax." },
                 functionName: { type: "string" as const, description: "The name of the main function the student must implement" },
                 referenceSolution: { type: "string" as const },
                 hint1: { type: "string" as const },
