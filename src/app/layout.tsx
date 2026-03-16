@@ -16,7 +16,7 @@ const firaCode = Fira_Code({
 });
 
 export const metadata: Metadata = {
-  title: "SpotTheBug.ai — AI Voice Code Review Training",
+  title: "SpotTheBug — AI Voice Code Review Training",
   description:
     "Train your code review skills with an AI voice mentor. Practice finding real bugs from open source projects. The #1 platform for developers who want to think critically about AI-generated code.",
   keywords: [
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     "code quality",
   ],
   openGraph: {
-    title: "SpotTheBug.ai — AI Voice Code Review Training",
+    title: "SpotTheBug — AI Voice Code Review Training",
     description:
       "Train your code review skills with an AI voice mentor. Real bugs. Real skills.",
     type: "website",

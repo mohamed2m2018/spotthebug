@@ -274,7 +274,7 @@ export default function Home() {
       <footer className={styles.footer}>
         <div className={styles.footerContent}>
           <div className={styles.footerCopy}>
-            © {new Date().getFullYear()} SpotTheBug.ai — Train smarter, code better.
+            © {new Date().getFullYear()} SpotTheBug — Train smarter, code better.
           </div>
           <ul className={styles.footerLinks}>
             <li><a href="#how-it-works">Three Modes</a></li>

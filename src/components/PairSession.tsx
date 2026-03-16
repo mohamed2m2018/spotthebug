@@ -82,6 +82,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
   const startedRef = useRef(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const pipWindowRef = useRef<Window | null>(null);
+  const pipMicMutedRef = useRef(false);
 
   // Transcript callback — no-op since we don't display transcripts in the UI.
   // The native-audio model's text output is internal reasoning (thinking text),
@@ -150,6 +151,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
       if (pipWindowRef.current) pipWindowRef.current.close();
     };
   }, []);
+
 
   // Auto-trigger code review after git detection completes with selected files
   useEffect(() => {
@@ -510,13 +512,6 @@ export default function PairSession({ onEnd }: PairSessionProps) {
             font-size: 32px;
             margin-bottom: 10px;
           }
-          .avatar-label {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #8b8ba3;
-            margin-top: 2px;
-          }
           .controls { display: flex; gap: 8px; }
           button {
             flex: 1;
@@ -573,7 +568,6 @@ export default function PairSession({ onEnd }: PairSessionProps) {
         </div>
         <div class="avatar-area">
           🐛
-          <div class="avatar-label" id="pip-avatar-label">Listening...</div>
         </div>
         <div class="status-row">
           <div class="connection">
@@ -603,17 +597,14 @@ export default function PairSession({ onEnd }: PairSessionProps) {
       }, 1000);
 
       // ── Mic toggle with reactive button UI ──
-      let pipMicMuted = false;
       const micBtn = pipWindow.document.getElementById("pip-mic");
       micBtn?.addEventListener("click", () => {
         toggleMicrophone();
-        pipMicMuted = !pipMicMuted;
+        pipMicMutedRef.current = !pipMicMutedRef.current;
         if (micBtn) {
-          micBtn.textContent = pipMicMuted ? "🎤 Unmute" : "⏹ Mute";
-          micBtn.className = pipMicMuted ? "mic-inactive" : "mic-active";
+          micBtn.textContent = pipMicMutedRef.current ? "🎤 Unmute" : "⏹ Mute";
+          micBtn.className = pipMicMutedRef.current ? "mic-inactive" : "mic-active";
         }
-        const label = pipWindow.document.getElementById("pip-avatar-label");
-        if (label) label.textContent = pipMicMuted ? "Muted" : "Listening...";
       });
 
       // ── Pause AI toggle with reactive button UI ──
