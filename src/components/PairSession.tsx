@@ -6,6 +6,7 @@ import BugAvatar from "@/components/BugAvatar";
 import FloatingCallPopup from "@/components/FloatingCallPopup";
 import { isDirectoryPickerSupported, pickAndReadWorkspace, WorkspaceResult } from "@/utils/workspaceReader";
 import { isGitRepo, getChangedFiles, GitChangedFile } from "@/utils/gitDiff";
+import { fetchVoiceToken } from "@/lib/voiceUtils";
 import type { ReviewFinding } from "@/config/prompts";
 import * as traceClient from "@/lib/traceClient";
 import { recordSession } from "@/utils/recordSession";
@@ -338,6 +339,14 @@ export default function PairSession({ onEnd }: PairSessionProps) {
 
   // ── Start pairing ──
   const startPairing = async (context: PairSessionContext) => {
+    // Pre-fetch ephemeral token NOW — it runs in parallel while user picks screen
+    // This overlaps ~1-3s of network latency with the screen share dialog
+    const tokenPromise = fetchVoiceToken("pair", {
+      reviewFindings: context.reviewFindings || undefined,
+      selectedFiles: context.selectedFiles || undefined,
+      goal: context.goal || undefined,
+    });
+
     // Step 1: Open desktop popup FIRST — must happen during user gesture
     // (documentPictureInPicture requires transient user activation)
     if ("documentPictureInPicture" in window) {
@@ -348,7 +357,8 @@ export default function PairSession({ onEnd }: PairSessionProps) {
       }
     }
 
-    // Step 2: Get screen share — mandatory
+    // Step 2: Get screen share — mandatory (user interaction happens here,
+    // token fetch is running in parallel during this time)
     let screenStream: MediaStream;
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({
@@ -359,10 +369,23 @@ export default function PairSession({ onEnd }: PairSessionProps) {
       // User cancelled the screen share dialog — close PiP if opened
       if (pipWindowRef.current) pipWindowRef.current.close();
       setTreeError("🖥️ Screen sharing is required for pair programming. Please share your screen to start.");
+      // Token fetch result will be garbage-collected
       return;
     }
 
-    // Step 3: Screen share granted — now connect
+    // Step 3: Await the pre-fetched token (likely already resolved by now)
+    let preAuthToken: string;
+    try {
+      preAuthToken = await tokenPromise;
+    } catch (tokenErr) {
+      console.error("[Pair] Pre-fetch token failed:", tokenErr);
+      screenStream.getTracks().forEach(t => t.stop());
+      if (pipWindowRef.current) pipWindowRef.current.close();
+      setTreeError("Failed to authenticate. Please try again.");
+      return;
+    }
+
+    // Step 4: Screen share granted + token ready — now connect
     setPhase("active");
     if (!pipWindowRef.current) {
       // PiP wasn't opened (unsupported browser) — show in-page popup
@@ -371,7 +394,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     setMessages([{ role: "ai", text: "🎤 Connecting..." }]);
 
     try {
-      await startSession({ ...context, screenStream });
+      await startSession({ ...context, screenStream, preAuthToken });
       // Don't show "Connected" message — let the AI's first audio response
       // (after seeing the screen) naturally confirm the connection
     } catch (error) {

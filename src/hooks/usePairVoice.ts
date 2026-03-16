@@ -29,6 +29,8 @@ export interface PairSessionContext {
   screenStream?: MediaStream;
   reviewFindings?: ReviewFinding[];
   selectedFiles?: string[];
+  /** Pre-fetched ephemeral token — skips token fetch if provided */
+  preAuthToken?: string;
 }
 
 interface UsePairVoiceOptions {
@@ -267,9 +269,9 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
     }
 
     try {
-      // Pass review context to the token route — it bakes it into the locked systemInstruction
-      // (Google's constrained tokens LOCK config, client-side systemInstruction is silently ignored)
-      const ephemeralToken = await fetchVoiceToken("pair", {
+      // Use pre-fetched token if available (overlapped with screen share dialog),
+      // otherwise fetch now (fallback for reconnects or direct calls)
+      const ephemeralToken = context?.preAuthToken || await fetchVoiceToken("pair", {
         reviewFindings: context?.reviewFindings || undefined,
         selectedFiles: context?.selectedFiles || undefined,
         goal: context?.goal || undefined,
