@@ -2,6 +2,10 @@
 
 AI voice coding coach that talks to you and sees your screen. Hunt bugs, pair program, or solve challenges — powered by Gemini Live API.
 
+## Architecture
+
+![SpotTheBug System Architecture](/architecture.png)
+
 ## Prerequisites
 
 - **Node.js** 20+
