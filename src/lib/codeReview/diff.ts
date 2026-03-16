@@ -67,14 +67,7 @@ export function computeChangedLines(
   }
 
   // Collapse into ranges
-  const rawRanges = collapseToRanges(changedNewLines, newLines.length);
-
-  // Expand ranges by a context margin (like git diff's -U3 default).
-  // When code is deleted, the AI needs to see surrounding lines to identify
-  // issues caused by the removal. Without margin, legitimate findings on
-  // neighboring lines would be missed.
-  const CONTEXT_MARGIN = 3;
-  const ranges = expandRanges(rawRanges, newLines.length, CONTEXT_MARGIN);
+  const ranges = collapseToRanges(changedNewLines, newLines.length);
 
   // Add deletion markers (pure deletions that don't have corresponding new lines)
   if (deletedOldLines.size > 0 && changedNewLines.size === 0 && ranges.length === 0) {

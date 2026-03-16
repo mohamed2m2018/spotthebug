@@ -74,17 +74,50 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const result = await reviewCode({
-      files: reviewFiles,
-      goal: body.goal,
+    // Stream progress events via SSE
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          const result = await reviewCode(
+            { files: reviewFiles, goal: body.goal },
+            undefined,
+            (progressMessage) => {
+              // Send progress event as SSE
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ type: 'progress', message: progressMessage })}\n\n`)
+              );
+            },
+          );
+
+          // Send final result
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({
+              type: 'result',
+              findings: result.findings,
+              summary: result.summary,
+              riskScore: result.riskScore,
+              filesReviewed: result.filesReviewed,
+              tool: 'gemini-grounded',
+            })}\n\n`)
+          );
+          controller.close();
+        } catch (error) {
+          console.error('[ReviewCode] Stream error:', error);
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Code review failed' })}\n\n`)
+          );
+          controller.close();
+        }
+      },
     });
 
-    return NextResponse.json({
-      findings: result.findings,
-      summary: result.summary,
-      riskScore: result.riskScore,
-      filesReviewed: result.filesReviewed,
-      tool: 'gemini-grounded',
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
     });
   } catch (error) {
     console.error('[ReviewCode] Error:', error);

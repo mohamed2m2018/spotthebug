@@ -326,10 +326,17 @@ async function zlibDecompress(data: Uint8Array): Promise<Uint8Array> {
   const ds = new DecompressionStream('deflate');
   const writer = ds.writable.getWriter();
   const reader = ds.readable.getReader();
-  writer.write(new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)) as unknown as BufferSource);
-  // Close may throw "Junk found after end of compressed data" when pack data
-  // has trailing bytes after the zlib stream — this is expected and safe to ignore.
-  writer.close().catch(() => {});
+
+  // Write data and close. The close() may throw "Junk found after end of
+  // compressed data" when pack data has trailing bytes — this is expected.
+  const writePromise = writer.write(
+    new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)) as unknown as BufferSource
+  );
+  const closePromise = writer.close();
+
+  // Suppress both write and close errors — they fire when trailing bytes exist
+  writePromise.catch(() => {});
+  closePromise.catch(() => {});
 
   const chunks: Uint8Array[] = [];
   let totalLength = 0;
@@ -341,7 +348,9 @@ async function zlibDecompress(data: Uint8Array): Promise<Uint8Array> {
       totalLength += value.length;
     }
   } catch {
-    // Stream may error after yielding all valid data — safe to ignore
+    // Stream may error after yielding all valid decompressed data — safe to ignore.
+    // Cancel the reader to prevent further internal rejections from leaking.
+    reader.cancel().catch(() => {});
   }
   const result = new Uint8Array(totalLength);
   let offset = 0;
@@ -913,11 +922,28 @@ async function scanRepoChanges(
     }
 
     // Check if file is staged (index SHA ≠ HEAD SHA).
-    // ONLY flag when we actually have the HEAD SHA (loose object readable).
-    // If headTree is null (commit packed) or headSha is undefined (tree partially packed),
-    // we can't determine staged status — so we don't flag it.
+    // If headTree exists but has no entry for this file, it's a NEWLY ADDED file.
     const headSha = headTree?.get(filepath);
+    const isNewlyAdded = !!headTree && !headSha; // in index but not in HEAD = new file
     const isStaged = !!headSha && headSha !== indexEntry.sha;
+
+    if (isNewlyAdded) {
+      // This file was git add'd but doesn't exist in the last commit — it's new
+      let content: string | null = null;
+      try {
+        const parts = filepath.split('/');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let current: any = repoHandle;
+        for (let i = 0; i < parts.length - 1; i++) {
+          current = await current.getDirectoryHandle(parts[i]);
+        }
+        const fileHandle = await current.getFileHandle(parts[parts.length - 1]) as FileSystemFileHandle;
+        const file = await fileHandle.getFile();
+        if (file.size < 1_000_000) content = await file.text();
+      } catch { /* file may not exist on disk */ }
+      changedFiles.push({ filePath: filepath, status: 'added', content });
+      continue;
+    }
 
     try {
       // Resolve file handle by walking path segments
@@ -940,7 +966,6 @@ async function scanRepoChanges(
         try { content = await file.text(); } catch { /* skip */ }
 
         // Read the committed (HEAD) version for diff comparison.
-        // Uses the HEAD tree SHA → read loose blob object → decode text.
         let originalContent: string | null = null;
         if (headSha) {
           originalContent = await readBlobContent(repoHandle, headSha);

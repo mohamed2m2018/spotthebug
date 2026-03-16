@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { usePairVoice, VoiceTranscript, PairSessionContext } from "@/hooks/usePairVoice";
 import BugAvatar from "@/components/BugAvatar";
+import FloatingCallPopup from "@/components/FloatingCallPopup";
 import { isDirectoryPickerSupported, pickAndReadWorkspace, WorkspaceResult } from "@/utils/workspaceReader";
 import { isGitRepo, getChangedFiles, GitChangedFile } from "@/utils/gitDiff";
 import type { ReviewFinding } from "@/config/prompts";
@@ -29,6 +30,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
   const [pickedWorkspace, setPickedWorkspace] = useState<WorkspaceResult | null>(null);
   const [supportsDirectoryPicker, setSupportsDirectoryPicker] = useState(false);
   const [readingFile, setReadingFile] = useState<string | null>(null);
+  const [showFloatingPopup, setShowFloatingPopup] = useState(false);
 
   // Git diff & review state
   const [changedFiles, setChangedFiles] = useState<GitChangedFile[]>([]);
@@ -177,7 +179,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     });
 
     // Start progress before the try so it's accessible in finally
-    let progressInterval: ReturnType<typeof setInterval> | undefined;
+
 
     try {
       const filesToReview = changedFiles
@@ -189,22 +191,15 @@ export default function PairSession({ onEnd }: PairSessionProps) {
           language: f.filePath.split('.').pop() || 'text',
         }));
 
-      // Cycle progress messages while the API call is pending
-      const progressMessages = [
-        '🔍 Sending code for review...',
-        '🌐 Searching best practices & documentation...',
-        '📋 Analyzing code patterns...',
-        '🔎 Cross-referencing with industry standards...',
-        '📝 Structuring review findings...',
-      ];
-      let msgIndex = 0;
-      setReviewProgress(progressMessages[0]);
-      progressInterval = setInterval(() => {
-        msgIndex++;
-        if (msgIndex < progressMessages.length) {
-          setReviewProgress(progressMessages[msgIndex]);
-        }
-      }, 4000);
+      // Diagnostic: show which files have originalContent for diff scoping
+      console.log('[Review] Files being sent to review API:');
+      for (const f of filesToReview) {
+        const hasOrig = !!f.originalContent;
+        console.log(`  ${hasOrig ? '✅' : '⚠️ FULL FILE'} ${f.path} (content: ${f.content.length}, original: ${f.originalContent?.length ?? 'MISSING'})`);
+      }
+
+      // Stream real progress from SSE response
+      setReviewProgress('🔍 Sending code for review...');
 
       const res = await fetch('/api/review-code', {
         method: 'POST',
@@ -213,9 +208,49 @@ export default function PairSession({ onEnd }: PairSessionProps) {
       });
 
       if (!res.ok) throw new Error('Review API failed');
-      const data = await res.json();
-      setReviewFindings(data.findings || []);
-      setReviewTool(data.tool || 'unknown');
+
+      // Read SSE stream for real-time progress
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let data: { findings?: unknown[]; tool?: string; riskScore?: number; summary?: string } | null = null;
+
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || ''; // keep incomplete last chunk
+
+          for (const line of lines) {
+            const match = line.match(/^data: (.+)$/m);
+            if (!match) continue;
+            try {
+              const event = JSON.parse(match[1]);
+              if (event.type === 'progress') {
+                setReviewProgress(event.message);
+              } else if (event.type === 'result') {
+                data = event;
+              } else if (event.type === 'error') {
+                throw new Error(event.error);
+              }
+            } catch (e) {
+              if (e instanceof SyntaxError) continue; // skip malformed JSON
+              throw e;
+            }
+          }
+        }
+      }
+
+      if (data) {
+        setReviewFindings((data.findings as typeof reviewFindings) || []);
+        setReviewTool(data.tool || 'unknown');
+      } else {
+        throw new Error('No review result received');
+      }
 
       traceClient.traceEvent(reviewTraceId, 'codeReview.complete', {
         output: {
@@ -234,7 +269,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
         metadata: { error: String(err) },
       });
     } finally {
-      if (progressInterval) clearInterval(progressInterval);
+
       setReviewProgress('');
       setIsReviewing(false);
       traceClient.endTrace(reviewTraceId);
@@ -254,7 +289,17 @@ export default function PairSession({ onEnd }: PairSessionProps) {
 
   // ── Start pairing ──
   const startPairing = async (context: PairSessionContext) => {
-    // Step 1: Get screen share FIRST — mandatory
+    // Step 1: Open desktop popup FIRST — must happen during user gesture
+    // (documentPictureInPicture requires transient user activation)
+    if ("documentPictureInPicture" in window) {
+      try {
+        await openDesktopPopup();
+      } catch (err) {
+        console.warn("[Pair] Could not open desktop popup, using in-page fallback:", err);
+      }
+    }
+
+    // Step 2: Get screen share — mandatory
     let screenStream: MediaStream;
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({
@@ -262,13 +307,18 @@ export default function PairSession({ onEnd }: PairSessionProps) {
         audio: false,
       });
     } catch {
-      // User cancelled the screen share dialog
+      // User cancelled the screen share dialog — close PiP if opened
+      if (pipWindowRef.current) pipWindowRef.current.close();
       setTreeError("🖥️ Screen sharing is required for pair programming. Please share your screen to start.");
       return;
     }
 
-    // Step 2: Screen share granted — now connect
+    // Step 3: Screen share granted — now connect
     setPhase("active");
+    if (!pipWindowRef.current) {
+      // PiP wasn't opened (unsupported browser) — show in-page popup
+      setShowFloatingPopup(true);
+    }
     setMessages([{ role: "ai", text: "🎤 Connecting..." }]);
 
     try {
@@ -278,6 +328,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     } catch (error) {
       console.error("Failed to start pair:", error);
       screenStream.getTracks().forEach(t => t.stop());
+      if (pipWindowRef.current) pipWindowRef.current.close();
       setMessages([{ role: "ai", text: "Failed to connect. Try again." }]);
     }
   };
@@ -309,8 +360,8 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     startPairing(context);
   };
 
-  // ── PiP floating widget ──
-  const openPipWidget = async () => {
+  // ── PiP Desktop Widget (always-on-top OS window) ──
+  const openDesktopPopup = async () => {
     if (!("documentPictureInPicture" in window)) {
       alert("Picture-in-Picture not supported in this browser. Use Chrome/Edge.");
       return;
@@ -320,68 +371,204 @@ export default function PairSession({ onEnd }: PairSessionProps) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
         width: 320,
-        height: 220,
+        height: 240,
       });
       pipWindowRef.current = pipWindow;
+      // Hide in-page popup while desktop popup is open
+      setShowFloatingPopup(false);
 
       pipWindow.document.body.innerHTML = `
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: 'Inter', -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
-          .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-          .title { font-size: 14px; font-weight: 600; }
-          .timer { font-size: 13px; color: #a0a0b0; font-variant-numeric: tabular-nums; }
-          .status { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 12px; }
-          .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; }
-          .dot.off { background: #ef4444; }
-          .controls { display: flex; gap: 8px; flex-wrap: wrap; }
-          button { padding: 8px 14px; border-radius: 8px; border: none; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
-          .mic { background: #4ade80; color: #000; }
-          .mic.muted { background: #374151; color: #9ca3af; }
-          .end { background: #ef4444; color: #fff; }
+          body {
+            font-family: 'Inter', -apple-system, system-ui, sans-serif;
+            background: #14141e;
+            color: #e8e8f0;
+            padding: 16px;
+            user-select: none;
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            margin-bottom: 14px;
+          }
+          .header-left { display: flex; align-items: center; gap: 8px; }
+          .title { font-size: 14px; font-weight: 600; color: #f0a04b; }
+          .status-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 14px;
+          }
+          .connection {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #8b8ba3;
+          }
+          .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+            box-shadow: 0 0 8px rgba(16,185,129,0.6);
+            animation: pulseDot 2s ease-in-out infinite;
+          }
+          @keyframes pulseDot {
+            0%, 100% { box-shadow: 0 0 8px rgba(16,185,129,0.4); }
+            50% { box-shadow: 0 0 16px rgba(16,185,129,0.8); }
+          }
+          .timer {
+            font-family: 'Fira Code', monospace;
+            font-size: 14px;
+            font-weight: 600;
+            color: #f0a04b;
+            padding: 2px 10px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 6px;
+            font-variant-numeric: tabular-nums;
+          }
+          .avatar-area {
+            text-align: center;
+            font-size: 32px;
+            margin-bottom: 10px;
+          }
+          .avatar-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #8b8ba3;
+            margin-top: 2px;
+          }
+          .controls { display: flex; gap: 8px; }
+          button {
+            flex: 1;
+            padding: 10px 0;
+            border-radius: 10px;
+            border: none;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+          }
+          .mic-active {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: #fff;
+            box-shadow: 0 0 12px rgba(239,68,68,0.25);
+          }
+          .mic-inactive {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: #fff;
+          }
+          .end-btn {
+            background: rgba(239,68,68,0.12);
+            border: 1px solid rgba(239,68,68,0.25);
+            color: #fca5a5;
+          }
+          .end-btn:hover {
+            background: rgba(239,68,68,0.2);
+            color: #fff;
+          }
+          .back-btn {
+            width: 100%;
+            margin-top: 8px;
+            padding: 8px 0;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.04);
+            color: #8b8ba3;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+          }
+          .back-btn:hover {
+            background: rgba(255,255,255,0.08);
+            color: #e8e8f0;
+            border-color: rgba(255,255,255,0.2);
+          }
         </style>
         <div class="header">
-          <span class="title">🐛 SpotTheBug</span>
+          <div class="header-left">
+            <span>🐛</span>
+            <span class="title">SpotTheBug</span>
+          </div>
+        </div>
+        <div class="avatar-area">
+          🐛
+          <div class="avatar-label" id="pip-avatar-label">Listening...</div>
+        </div>
+        <div class="status-row">
+          <div class="connection">
+            <span class="dot"></span>
+            Connected
+          </div>
           <span class="timer" id="pip-timer">0:00</span>
         </div>
-        <div class="status">
-          <span class="dot" id="pip-dot"></span>
-          <span id="pip-status">Connected</span>
-        </div>
         <div class="controls">
-          <button class="mic" id="pip-mic">🎤 Mute</button>
-          <button class="end" id="pip-end">⏹ End</button>
+          <button class="mic-active" id="pip-mic">⏹ Mute</button>
+          <button class="end-btn" id="pip-end">⏹ End</button>
         </div>
+        <button class="back-btn" id="pip-back">↩ Back to Browser</button>
       `;
 
-      // Wire up PiP buttons
-      pipWindow.document.getElementById("pip-mic")?.addEventListener("click", () => {
-        toggleMicrophone();
-      });
-      pipWindow.document.getElementById("pip-review")?.addEventListener("click", () => {
-        sendText("[REVIEW_NOW] Look at my screen right now. Describe exactly what you see and give me your honest review — architecture, clean code, bugs, everything.");
-      });
-      pipWindow.document.getElementById("pip-end")?.addEventListener("click", () => {
-        handleEnd();
-        pipWindow.close();
-      });
-
-      // Update PiP timer
-      const pipTimer = setInterval(() => {
+      // ── Self-updating timer (owns its own counter — no stale closure) ──
+      let pipSeconds = elapsedTime;
+      const pipTimerInterval = setInterval(() => {
+        pipSeconds++;
         const timerEl = pipWindow.document.getElementById("pip-timer");
         if (timerEl) {
-          const mins = Math.floor(elapsedTime / 60);
-          const secs = elapsedTime % 60;
+          const mins = Math.floor(pipSeconds / 60);
+          const secs = pipSeconds % 60;
           timerEl.textContent = `${mins}:${secs.toString().padStart(2, "0")}`;
         }
       }, 1000);
 
+      // ── Mic toggle with reactive button UI ──
+      let pipMicMuted = false;
+      const micBtn = pipWindow.document.getElementById("pip-mic");
+      micBtn?.addEventListener("click", () => {
+        toggleMicrophone();
+        pipMicMuted = !pipMicMuted;
+        if (micBtn) {
+          micBtn.textContent = pipMicMuted ? "🎤 Unmute" : "⏹ Mute";
+          micBtn.className = pipMicMuted ? "mic-inactive" : "mic-active";
+        }
+        const label = pipWindow.document.getElementById("pip-avatar-label");
+        if (label) label.textContent = pipMicMuted ? "Muted" : "Listening...";
+      });
+
+      // ── End session (full close — no in-page fallback) ──
+      let endedViaButton = false;
+      pipWindow.document.getElementById("pip-end")?.addEventListener("click", () => {
+        endedViaButton = true;
+        handleEnd();
+        pipWindow.close();
+      });
+
+      // ── Back to browser — focus parent window but keep PiP alive ──
+      const returnToBrowser = () => { window.focus(); };
+      pipWindow.document.getElementById("pip-back")?.addEventListener("click", returnToBrowser);
+      pipWindow.document.body.addEventListener("click", (e: MouseEvent) => {
+        if (!(e.target as HTMLElement).closest("button")) returnToBrowser();
+      });
+
+      // ── Cleanup when PiP window is closed ──
       pipWindow.addEventListener("pagehide", () => {
-        clearInterval(pipTimer);
+        clearInterval(pipTimerInterval);
         pipWindowRef.current = null;
+        // Only show in-page popup if PiP was closed via OS × button, not End
+        if (!endedViaButton) {
+          setShowFloatingPopup(true);
+        }
       });
     } catch (err) {
-      console.error("[Pair] PiP error:", err);
+      console.error("[Pair] Desktop PiP error:", err);
     }
   };
 
@@ -805,7 +992,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
           <div className={styles.sessionControls}>
             <span className={styles.timer}>{formatTime(elapsedTime)}</span>
             {"documentPictureInPicture" in (typeof window !== "undefined" ? window : {}) && (
-              <button className={styles.pipBtn} onClick={openPipWidget} title="Pop out controls">
+              <button className={styles.pipBtn} onClick={openDesktopPopup} title="Pop out controls">
                 ⬆️ Pop Out
               </button>
             )}
@@ -869,6 +1056,20 @@ export default function PairSession({ onEnd }: PairSessionProps) {
           </div>
         </div>
       </main>
+
+      {/* Floating call popup */}
+      {showFloatingPopup && (
+        <FloatingCallPopup
+          isConnected={isConnected}
+          isRecording={isRecording}
+          isSpeaking={isSpeaking}
+          elapsedTime={elapsedTime}
+          onToggleMic={toggleMicrophone}
+          onEnd={handleEnd}
+          onClose={() => setShowFloatingPopup(false)}
+          onPinToDesktop={openDesktopPopup}
+        />
+      )}
     </div>
   );
 }

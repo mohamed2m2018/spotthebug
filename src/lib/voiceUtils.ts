@@ -28,6 +28,7 @@ export async function fetchVoiceToken(
     reviewFindings?: unknown[];
     selectedFiles?: string[];
     goal?: string;
+    resumptionHandle?: string;
   }
 ): Promise<string> {
   const res = await fetch("/api/voice/token", {
@@ -38,6 +39,7 @@ export async function fetchVoiceToken(
       ...(dynamicContext?.reviewFindings && { reviewFindings: dynamicContext.reviewFindings }),
       ...(dynamicContext?.selectedFiles && { selectedFiles: dynamicContext.selectedFiles }),
       ...(dynamicContext?.goal && { goal: dynamicContext.goal }),
+      ...(dynamicContext?.resumptionHandle && { resumptionHandle: dynamicContext.resumptionHandle }),
     }),
   });
   const data = await res.json();

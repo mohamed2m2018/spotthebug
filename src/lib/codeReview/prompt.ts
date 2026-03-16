@@ -119,29 +119,35 @@ export function buildReviewPrompt(
   const language = files.length > 0 ? getLanguageName(files[0].fileName) : 'Unknown';
   const fileInfo = createFileInfo(files);
 
-  // Build file contents — only include changed line ranges, not the full file.
-  // This prevents the AI from commenting on unchanged code.
+  // Build file contents — send full file but MARK changed lines with >>> prefix.
+  // This gives the AI full context (imports, function bodies, brackets)
+  // while clearly indicating which lines to focus on.
   const fileContents = files
     .map(f => {
       const lines = f.fileContent.split('\n');
       const changedRanges = f.changedLines || [];
 
       if (changedRanges.length === 0) {
-        // No specific ranges — send full file (backward compat for new/untracked files)
-        return `--- ${f.fileName} (${getLanguageName(f.fileName)}) ---\n${f.fileContent}`;
+        // No specific ranges — mark all lines as changed (new/untracked files)
+        return `--- ${f.fileName} (${getLanguageName(f.fileName)}) [all lines changed] ---\n${lines.map((line, i) => `>>> ${i + 1}: ${line}`).join('\n')}`;
       }
 
-      // Only extract the lines within changed ranges
-      const snippets = changedRanges.map(range => {
-        const start = Math.max(range.start, 1);
-        const end = Math.min(range.end, lines.length);
-        const snippet = lines.slice(start - 1, end)
-          .map((line, i) => `${start + i}: ${line}`)
-          .join('\n');
-        return `Lines ${start}-${end}:\n${snippet}`;
-      });
+      // Build a set of changed line numbers for O(1) lookup
+      const changedLineNumbers = new Set<number>();
+      for (const range of changedRanges) {
+        for (let i = range.start; i <= range.end; i++) {
+          changedLineNumbers.add(i);
+        }
+      }
 
-      return `--- ${f.fileName} (${getLanguageName(f.fileName)}) [changed lines only] ---\n${snippets.join('\n\n')}`;
+      // Send full file with changed lines marked by >>>
+      const annotatedLines = lines.map((line, i) => {
+        const lineNum = i + 1;
+        const marker = changedLineNumbers.has(lineNum) ? '>>> ' : '    ';
+        return `${marker}${lineNum}: ${line}`;
+      }).join('\n');
+
+      return `--- ${f.fileName} (${getLanguageName(f.fileName)}) ---\n${annotatedLines}`;
     })
     .join('\n\n');
 
@@ -150,26 +156,47 @@ export function buildReviewPrompt(
     : '';
 
   // Core prompt adapted from shippie's instructionPrompt
-  return `You are an expert ${language} developer performing a code review. Your task is to review the changed code and produce structured findings.
+  return `You are an expert ${language} developer performing a thorough code review. Your task is to review the changed code, find real problems, and suggest concrete improvements.
+
+// CRITICAL: VERIFY BEFORE REPORTING
+Before reporting ANY finding about a third-party library, framework, or API:
+- Use Google Search to verify how the library actually works — its return types, sync/async behavior, method signatures.
+- If you are unsure whether a method is synchronous or asynchronous, SEARCH for its documentation first.
+- A wrong finding about a library (e.g., claiming a synchronous API is async) will mislead the developer and cause real damage.
+- Only report library-related issues you have verified through search.
 
 // Goal
-Review the changed code in the provided files. Identify issues, assess risk, and produce a concise summary.
+Review the changed code in the provided files. Find bugs, security issues, architectural problems, and improvement opportunities.
 ${goal ? `The developer's stated goal: "${goal}"` : ''}
 
-// Understanding File Changes
-- Line numbers followed by "(deletion)" indicate pure deletions — content removed without replacement.
-- Regular line numbers show where content was added or modified.
+// Understanding The Code Format
+- Each file is shown in FULL with line numbers.
+- Lines prefixed with \`>>>\` are CHANGED lines — these are the lines you must review.
+- Lines prefixed with spaces are UNCHANGED context — use them to understand imports, function signatures, and flow, but do NOT report findings on unchanged lines.
 
-// Rules for Code Review (from shippie/code-review-gpt)
-- **Functionality:** Identify changes that could break existing functionality.
-- **Testing:** Note if changes lack adequate test coverage.
-- **Best Practices:** Ensure changes follow clean code principles, DRY, SOLID where applicable.
-- **Risk Assessment:** Score each finding from 1 (low risk) to 5 (high risk). Flag API keys or secrets as risk 5.
-- **Readability & Performance:** Comment on readability and performance issues.
-- **Focus:** You are given ONLY the changed code snippets with their line numbers. ONLY output findings for line numbers you can see in the provided snippets. You do not have access to the rest of the file — do not guess or infer issues outside the visible lines.
-- **Brevity:** Keep feedback concise and accurate. If multiple similar issues exist, report the most critical.
-- **Confidence:** Only report issues you are confident about. If unsure about a library or pattern, skip it.
-- **Language:** Provide feedback in ${reviewLanguage}.
+// What To Look For (on >>> changed lines ONLY)
+- **Bugs & Logic Errors:** Race conditions, null/undefined access, off-by-one errors, unhandled promise rejections, incorrect conditionals.
+- **Security:** Exposed secrets, missing input validation, injection risks, insecure defaults.
+- **Architecture:** Tight coupling, God functions/components, missing separation of concerns, wrong patterns for the use case.
+- **Error Handling:** Swallowed errors, missing try/catch, no user feedback on failure, silent failures.
+- **Performance:** Unnecessary re-renders, missing memoization, N+1 queries, expensive operations in hot paths.
+- **Clean Code:** DRY violations, magic numbers, poor naming, dead code, commented-out code left in.
+- **Enhancements:** Better patterns that could replace the current approach, missing edge case handling, configuration that should be externalized.
+- **Testing:** Missing test coverage for critical paths.
+
+// Severity Definitions
+- **ERROR:** Bugs, security vulnerabilities, data loss risks, crashes. Things that MUST be fixed before shipping.
+- **WARNING:** Architectural issues, performance problems, code quality concerns. Things that SHOULD be fixed.
+- **INFO:** Concrete improvements — a better pattern, a missing edge case, a config that should be externalized, a cleaner approach. Every INFO finding must describe WHAT to change and WHY it's better. Observations like "this is correctly configured" are NOT findings — only include actionable improvements.
+
+Every file has room for improvement. Find at least one actionable finding per file. Describe the problem specifically — what is wrong, what could go wrong, or what would be better.
+
+// Rules
+- ONLY report findings on lines marked with \`>>>\`. Use unchanged lines for context only.
+- Focus on the most impactful issues first.
+- Be specific: reference exact line numbers and variable names.
+- When a finding involves library behavior, include a brief technical explanation of WHY the library works that way. For example: explain that MMKV is synchronous because it uses memory-mapped files (mmap) via JSI, not the React Native bridge. This depth helps the developer learn, not just fix.
+- Provide feedback in ${reviewLanguage}.
 ${customSection}
 // File Tree
 ${fileInfo}
@@ -185,14 +212,12 @@ Return a JSON object with this exact structure:
       "line": 42,
       "endLine": 45,
       "severity": "ERROR" | "WARNING" | "INFO",
-      "message": "Brief description of the issue",
-      "rule": "category like security/performance/best-practice/logic-error/missing-tests",
+      "message": "Brief description of the PROBLEM or IMPROVEMENT — what is wrong or what would be better",
+      "rule": "category like security/performance/best-practice/logic-error/missing-tests/enhancement",
       "suggestedFix": "Optional: brief code or approach to fix"
     }
   ],
   "summary": "2-3 sentence summary of the overall changes and their quality",
   "riskScore": 1-5
-}
-
-Report only real issues you can verify in the code. Do not invent problems.`;
+}`;
 }

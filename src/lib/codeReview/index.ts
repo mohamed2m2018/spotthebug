@@ -29,6 +29,7 @@ export type { ReviewFile, LineRange } from './types';
 export async function reviewCode(
   options: ReviewOptions,
   apiKey?: string,
+  onProgress?: (message: string) => void,
 ): Promise<ReviewResult> {
   const key = apiKey || process.env.GEMINI_API_KEY;
   if (!key) {
@@ -44,10 +45,13 @@ export async function reviewCode(
     options.customInstructions,
   );
 
-  // Two-phase approach: Gemini doesn't support googleSearch + responseMimeType:'application/json'
-  // together. Phase 1 gets grounded review, Phase 2 structures it into JSON.
+  // Three-phase approach:
+  // Phase 1: Code review with Google Search grounding (free text)
+  // Phase 2: Validate findings — challenge each finding with Google Search
+  // Phase 3: Structure into JSON
 
   // Phase 1: Code review with Google Search grounding (free text output)
+  onProgress?.('🔍 Analyzing code with Google Search grounding...');
   const phase1Response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: prompt,
@@ -57,16 +61,45 @@ export async function reviewCode(
   });
 
   const groundedReview = phase1Response.text || '';
-  console.log(`[CodeReview] Phase 1 complete: ${groundedReview.length} chars grounded review`);
+  // Log grounding metadata to verify Google Search was actually used
+  const p1Grounding = phase1Response.candidates?.[0]?.groundingMetadata;
+  console.log(`[CodeReview] Phase 1 complete: ${groundedReview.length} chars | Google Search queries: ${p1Grounding?.searchEntryPoint ? 'YES' : 'NO'} | Grounding chunks: ${p1Grounding?.groundingChunks?.length || 0}`);
 
-  // Phase 2: Structure the grounded review into JSON schema
+  // Phase 2: Validate each finding — challenge library assumptions with Google Search
+  onProgress?.('🔎 Validating findings against documentation...');
   const phase2Response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
-    contents: `Extract the code review findings from the following review text into the exact JSON structure specified.
-Keep all information, severity levels, file names, line numbers, rules, and suggested fixes from the original review.
+    contents: `You are a senior code review validator. Your job is to fact-check the following code review findings.
 
-Review text:
+For EACH finding in the review:
+1. If the finding claims something about a third-party library (return types, sync/async behavior, method signatures, API behavior) — USE GOOGLE SEARCH to verify whether the claim is correct.
+2. If the finding is WRONG about how a library works (e.g., claiming a synchronous API returns a Promise when it doesn't), REMOVE the finding and explain why.
+3. If the finding is correct and verified, KEEP it as-is.
+4. If the finding is about pure application logic (not library-specific), keep it — no search needed.
+
+Output the VALIDATED review with only correct findings. Mark each finding as [VERIFIED] or [REMOVED] with a brief reason.
+
+Code review to validate:
 ${groundedReview}`,
+    config: {
+      tools: [{ googleSearch: {} }],
+    },
+  });
+
+  const validatedReview = phase2Response.text || groundedReview;
+  const p2Grounding = phase2Response.candidates?.[0]?.groundingMetadata;
+  console.log(`[CodeReview] Phase 2 (validation) complete: ${validatedReview.length} chars | Google Search queries: ${p2Grounding?.searchEntryPoint ? 'YES' : 'NO'} | Grounding chunks: ${p2Grounding?.groundingChunks?.length || 0}`);
+
+  // Phase 3: Structure the validated review into JSON schema
+  onProgress?.('📝 Structuring verified findings...');
+  const phase3Response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: `Extract the code review findings from the following validated review into the exact JSON structure specified.
+Only include findings marked as [VERIFIED] or findings not explicitly marked as [REMOVED].
+Keep all information, severity levels, file names, line numbers, rules, and suggested fixes from the review.
+
+Validated review:
+${validatedReview}`,
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
@@ -96,7 +129,7 @@ ${groundedReview}`,
     },
   });
 
-  const text = phase2Response.text || '{"findings":[],"summary":"Review completed.","riskScore":1}';
+  const text = phase3Response.text || '{"findings":[],"summary":"Review completed.","riskScore":1}';
   
   try {
     const parsed = JSON.parse(text);

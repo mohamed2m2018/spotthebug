@@ -69,6 +69,9 @@ export async function POST(req: NextRequest) {
     const expireTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     const newSessionExpireTime = new Date(Date.now() + 2 * 60 * 1000).toISOString();
 
+    // Client can send a resumption handle for reconnects
+    const resumptionHandle: string | undefined = body.resumptionHandle;
+
     const token = await client.authTokens.create({
       config: {
         uses: 1,
@@ -81,7 +84,16 @@ export async function POST(req: NextRequest) {
             temperature: 0.7,
             systemInstruction: {
               parts: [{ text: systemInstruction }]
-            }
+            },
+            // Context window compression → extend sessions beyond 10-min connection limit
+            contextWindowCompression: {
+              triggerTokens: "200000",
+              slidingWindow: { targetTokens: "100000" },
+            },
+            // Session resumption → survive periodic WebSocket resets
+            sessionResumption: {
+              ...(resumptionHandle ? { handle: resumptionHandle } : {}),
+            },
           }
         },
         httpOptions: { apiVersion: "v1alpha" },
@@ -92,17 +104,19 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ token: token.name, mode });
   } catch (error) {
-    console.error("Failed to generate ephemeral token:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errDetails = error instanceof Error ? error.stack : undefined;
+    console.error("Failed to generate ephemeral token:", errMsg, errDetails);
     // Log error to Langfuse
     try {
       const langfuse = getLangfuseServer();
       langfuse.trace({
         name: "voice.token.generate.error",
-        metadata: { error: error instanceof Error ? error.message : String(error) },
+        metadata: { error: errMsg },
       });
     } catch { /* tracing should never break the app */ }
     return NextResponse.json(
-      { error: "Failed to generate voice session token" },
+      { error: `Failed to generate voice session token: ${errMsg}` },
       { status: 500 }
     );
   }
