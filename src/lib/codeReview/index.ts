@@ -169,5 +169,5 @@ function normalizeSeverity(s: string): ReviewFinding['severity'] {
   const upper = (s || '').toUpperCase();
   if (upper.includes('ERROR') || upper.includes('CRITICAL') || upper.includes('HIGH')) return 'ERROR';
   if (upper.includes('WARN') || upper.includes('MEDIUM')) return 'WARNING';
-  return 'INFO';
+  return 'WARNING';
 }

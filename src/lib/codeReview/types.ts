@@ -20,7 +20,7 @@ export interface ReviewFinding {
   file: string;
   line: number;
   endLine?: number;
-  severity: 'ERROR' | 'WARNING' | 'INFO';
+  severity: 'ERROR' | 'WARNING';
   message: string;
   rule: string;
   suggestedFix?: string;

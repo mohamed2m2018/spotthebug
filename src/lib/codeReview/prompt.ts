@@ -187,9 +187,8 @@ ${goal ? `The developer's stated goal: "${goal}"` : ''}
 // Severity Definitions
 - **ERROR:** Bugs, security vulnerabilities, data loss risks, crashes. Things that MUST be fixed before shipping.
 - **WARNING:** Architectural issues, performance problems, code quality concerns. Things that SHOULD be fixed.
-- **INFO:** Concrete improvements — a better pattern, a missing edge case, a config that should be externalized, a cleaner approach. Every INFO finding must describe WHAT to change and WHY it's better. Observations like "this is correctly configured" are NOT findings — only include actionable improvements.
 
-Every file has room for improvement. Find at least one actionable finding per file. Describe the problem specifically — what is wrong, what could go wrong, or what would be better.
+Report only findings that require developer action — a code change, a fix, or a refactor. If a file has no real issues, skip it entirely.
 
 // Rules
 - ONLY report findings on lines marked with \`>>>\`. Use unchanged lines for context only.
@@ -211,7 +210,7 @@ Return a JSON object with this exact structure:
       "file": "path/to/file.ts",
       "line": 42,
       "endLine": 45,
-      "severity": "ERROR" | "WARNING" | "INFO",
+      "severity": "ERROR" | "WARNING",
       "message": "Brief description of the PROBLEM or IMPROVEMENT — what is wrong or what would be better",
       "rule": "category like security/performance/best-practice/logic-error/missing-tests/enhancement",
       "suggestedFix": "Optional: brief code or approach to fix"

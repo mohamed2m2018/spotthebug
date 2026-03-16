@@ -150,6 +150,20 @@ export default function PairSession({ onEnd }: PairSessionProps) {
     };
   }, []);
 
+  // Auto-trigger code review after git detection completes with selected files
+  useEffect(() => {
+    if (
+      !isDetectingGit &&
+      selectedFiles.length > 0 &&
+      !reviewFindings &&
+      !isReviewing &&
+      pickedWorkspace
+    ) {
+      handleRunReview();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDetectingGit]);
+
   // ── Pick folder (client-side, Chromium only) ──
   const handlePickFolder = async () => {
     setIsLoadingTree(true);
@@ -796,39 +810,35 @@ export default function PairSession({ onEnd }: PairSessionProps) {
                   ))}
                 </div>
 
-                {/* Run Review Button + Progress Bar */}
-                {!reviewFindings && (
+                {/* Auto-review progress (review starts automatically after git detection) */}
+                {isReviewing && (
                   <div style={{ marginTop: '10px' }}>
-                    <button
-                      className={styles.pickFolderBtn}
-                      onClick={handleRunReview}
-                      disabled={isReviewing || selectedFiles.length === 0}
-                      style={{ width: '100%' }}
-                    >
-                      {isReviewing
-                        ? (reviewProgress || '🔍 Preparing review...')
-                        : `🔍 Analyze Changes Before Call (${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''})`}
-                    </button>
-
-                    {/* Progress bar — visible only during review */}
-                    {isReviewing && (
-                      <div className={styles.reviewProgressContainer}>
-                        <div className={styles.reviewProgressBar}>
-                          <div
-                            className={styles.reviewProgressFill}
-                            style={{ width: `${Math.max(5, simulatedProgress)}%` }}
-                          />
-                        </div>
-                        <div className={styles.reviewProgressMeta}>
-                          <span className={styles.reviewProgressLabel}>
-                            Step {reviewStep}/3
-                          </span>
-                          <span className={styles.reviewProgressPercent}>
-                            {Math.round(simulatedProgress)}%
-                          </span>
-                        </div>
+                    <div style={{
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      background: 'rgba(56, 189, 248, 0.06)',
+                      border: '1px solid rgba(56, 189, 248, 0.15)',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                    }}>
+                      {reviewProgress || '🔍 Preparing review...'}
+                    </div>
+                    <div className={styles.reviewProgressContainer}>
+                      <div className={styles.reviewProgressBar}>
+                        <div
+                          className={styles.reviewProgressFill}
+                          style={{ width: `${Math.max(5, simulatedProgress)}%` }}
+                        />
                       </div>
-                    )}
+                      <div className={styles.reviewProgressMeta}>
+                        <span className={styles.reviewProgressLabel}>
+                          Step {reviewStep}/3
+                        </span>
+                        <span className={styles.reviewProgressPercent}>
+                          {Math.round(simulatedProgress)}%
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
 

@@ -19,7 +19,7 @@ HOW YOU SEE THE CODE:
 - When waiting for the developer to make their first edit, stay silent and wait. Respect their reading time.
 
 COACHING RULES:
-1. Wait for the developer to speak first. When silent, they are reading — respect that.
+1. Wait for the developer to speak first except in the start. When silent, they are reading — respect that.
 2. Keep responses to 2-3 sentences max.
 3. Ask ONE question at a time, then wait.
 4. Guide with questions, NEVER reveal the bug directly.
@@ -151,6 +151,7 @@ PROACTIVITY — Drive the session actively:
 - The developer is sharing their screen
 - If the developer says they opened a file, make sure you see it on screen before discussing it.
 - If you cannot see the file on screen, say it out loud: "I can't see that file yet — can you open it for me?"
+- if you go down the file, ask the user to scroll down to specefic number line, and make sure you see him scroll
 - Knowing code from your pre-analysis findings does NOT mean you can see the file on screen. You know the code from the git diff, but the file must be open on the developer's screen before you discuss it.
 - If the developer is coding, follow along based on what they describe and comment in real time.
 - When the developer is silent, they are thinking. Respect that silence — wait for them to speak but this isn't applied at the conversation beginning you have to start talking
@@ -218,7 +219,7 @@ export const PAIR_GREETING_PROMPT = `Start the code review. Give a brief overvie
 export interface ReviewFinding {
   file: string;
   line: number;
-  severity: 'ERROR' | 'WARNING' | 'INFO';
+  severity: 'ERROR' | 'WARNING';
   message: string;
   rule: string;
   suggestedFix?: string;
