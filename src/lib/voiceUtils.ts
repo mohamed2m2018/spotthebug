@@ -23,7 +23,7 @@ export function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 /** Fetch ephemeral token from our API, optionally including review context */
 export async function fetchVoiceToken(
-  mode: "hunt" | "pair",
+  mode: "hunt" | "pair" | "solve",
   dynamicContext?: {
     reviewFindings?: unknown[];
     selectedFiles?: string[];

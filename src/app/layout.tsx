@@ -42,7 +42,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} ${firaCode.variable}`}>
+      <body className={`${inter.variable} ${firaCode.variable}`} suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
     </html>

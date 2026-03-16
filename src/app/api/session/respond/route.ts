@@ -16,10 +16,58 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { action, userMessage, bug, conversationHistory, skills, excludeIds, difficulty } = body;
 
-    // Action: start — get a random bug and generate the intro message
+    // Action: start — get a bug (AI-generated first, static fallback)
     if (action === "start") {
       const userSkills: string[] = skills || ["react"];
-      const selectedBug = getRandomBug(userSkills, excludeIds || [], difficulty);
+
+      // Try AI-generated grounded bug first
+      let selectedBug = null;
+      try {
+        const genRes = await fetch(new URL("/api/generate-bug", req.url), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            skills: userSkills,
+            difficulty,
+            excludeTopics: excludeIds || [],
+          }),
+        });
+        if (genRes.ok && genRes.body) {
+          // generate-bug returns SSE — consume stream and extract result
+          const reader = genRes.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              try {
+                const event = JSON.parse(line.slice(6));
+                if (event.type === "result") {
+                  selectedBug = event.bug;
+                }
+              } catch { /* partial JSON */ }
+            }
+          }
+          if (selectedBug) {
+            console.log(`[Session] Using AI-generated bug: "${selectedBug.title}" (grounding chunks: ${selectedBug.groundingChunks})`);
+          }
+        }
+      } catch (err) {
+        console.warn("[Session] AI bug generation failed, using static fallback:", err);
+      }
+
+      // Fallback to static bug database
+      if (!selectedBug) {
+        selectedBug = getRandomBug(userSkills, excludeIds || [], difficulty);
+        if (selectedBug) {
+          console.log(`[Session] Using static bug: "${selectedBug.title}"`);
+        }
+      }
 
       if (!selectedBug) {
         return NextResponse.json(
@@ -31,7 +79,7 @@ export async function POST(req: NextRequest) {
       const introPrompt = buildTextSessionIntroPrompt(
         selectedBug.buggyCode,
         selectedBug.language,
-        selectedBug.description,
+        selectedBug.description || selectedBug.title,
         selectedBug.framework,
         selectedBug.category
       );
@@ -49,9 +97,9 @@ export async function POST(req: NextRequest) {
           title: selectedBug.title,
           buggyCode: selectedBug.buggyCode,
           language: selectedBug.language,
+          grounded: selectedBug.grounded || false,
         },
         aiMessage: aiResponse,
-        // Keep hints server-side — only send them when needed
       });
     }
 

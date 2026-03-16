@@ -2,7 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useHuntVoice, VoiceTranscript } from "@/hooks/useHuntVoice";
+import { useAnimatedProgress } from "@/hooks/useAnimatedProgress";
 import BugAvatar from "@/components/BugAvatar";
+import CodeEditor from "@/components/CodeEditor";
 import styles from "@/app/session/session.module.css";
 
 interface BugData {
@@ -32,6 +34,9 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [progressMessage, setProgressMessage] = useState("");
+  const [progressPercent, setProgressPercent] = useState(0);
+  const displayPercent = useAnimatedProgress(progressPercent);
   const [timer, setTimer] = useState(300);
   const [solvedCount, setSolvedCount] = useState(0);
   const [showSolvedBanner, setShowSolvedBanner] = useState(false);
@@ -68,8 +73,8 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   }, []);
 
   const {
-    isConnected, isRecording, isSpeaking,
-    startSession, stopSession, toggleMicrophone,
+    isConnected, isRecording, isSpeaking, isAiMuted,
+    startSession, stopSession, toggleMicrophone, toggleAiAudio,
     sendText, sendCodeUpdate, postSessionReport
   } = useHuntVoice({
     onTranscript: handleTranscript,
@@ -128,26 +133,60 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
 
   const startHuntSession = async () => {
     setIsLoading(true);
+    setProgressMessage("🔍 Searching for real bug patterns...");
+    setProgressPercent(10);
     try {
-      const bugRes = await fetch("/api/session/respond", {
+      // Call generate-bug SSE directly for progress updates
+      const genRes = await fetch("/api/generate-bug", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "start",
           skills: skills.map(s => s.toLowerCase().replace(".", "")),
           difficulty,
-          excludeIds: seenBugIds.current,
+          excludeTopics: seenBugIds.current,
         }),
       });
-      const bugData = await bugRes.json();
-      if (!bugRes.ok) throw new Error(bugData.error);
 
-      setBug(bugData.bug);
-      setEditedCode(bugData.bug.buggyCode);
-      seenBugIds.current.push(bugData.bug.id);
+      let bugData: BugData | null = null;
+      const reader = genRes.body?.getReader();
+      if (!reader) throw new Error("No stream");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "progress") {
+              setProgressMessage(event.message);
+              setProgressPercent(event.percentage || 0);
+            } else if (event.type === "result") {
+              bugData = event.bug;
+              setProgressPercent(100);
+            } else if (event.type === "error") {
+              throw new Error(event.error);
+            }
+          } catch (e) {
+            if (e instanceof SyntaxError) continue;
+            throw e;
+          }
+        }
+      }
+
+      if (!bugData) throw new Error("No bug generated");
+
+      setBug(bugData);
+      setEditedCode(bugData.buggyCode);
+      seenBugIds.current.push(bugData.id);
       setMessages([{ role: "ai", text: "🎙️ Voice session started! Speak or type below." }]);
 
-      const bugContext = `\`\`\`${bugData.bug.language}\n${bugData.bug.buggyCode}\n\`\`\`\nFramework: ${bugData.bug.framework}\nCategory: ${bugData.bug.category}`;
+      const bugContext = `\`\`\`${bugData.language}\n${bugData.buggyCode}\n\`\`\`\nFramework: ${bugData.framework}\nCategory: ${bugData.category}`;
       await startSession(bugContext);
       setStarted(true);
     } catch (error) {
@@ -161,26 +200,59 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const loadNextBug = async () => {
     setShowSolvedBanner(false);
     setIsLoading(true);
+    setProgressMessage("🔍 Searching for next bug...");
+    setProgressPercent(10);
     try {
-      const bugRes = await fetch("/api/session/respond", {
+      const genRes = await fetch("/api/generate-bug", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "start",
           skills: skills.map(s => s.toLowerCase().replace(".", "")),
           difficulty,
-          excludeIds: seenBugIds.current,
+          excludeTopics: seenBugIds.current,
         }),
       });
-      const bugData = await bugRes.json();
-      if (!bugRes.ok) throw new Error(bugData.error);
 
-      setBug(bugData.bug);
-      setEditedCode(bugData.bug.buggyCode);
-      seenBugIds.current.push(bugData.bug.id);
+      let bugData: BugData | null = null;
+      const reader = genRes.body?.getReader();
+      if (!reader) throw new Error("No stream");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "progress") {
+              setProgressMessage(event.message);
+              setProgressPercent(event.percentage || 0);
+            } else if (event.type === "result") {
+              bugData = event.bug;
+              setProgressPercent(100);
+            } else if (event.type === "error") {
+              throw new Error(event.error);
+            }
+          } catch (e) {
+            if (e instanceof SyntaxError) continue;
+            throw e;
+          }
+        }
+      }
+
+      if (!bugData) throw new Error("No bug generated");
+
+      setBug(bugData);
+      setEditedCode(bugData.buggyCode);
+      seenBugIds.current.push(bugData.id);
       setMessages(prev => [...prev, { role: "ai", text: "🐛 New bug loaded!" }]);
 
-      const bugContext = `\`\`\`${bugData.bug.language}\n${bugData.bug.buggyCode}\n\`\`\`\nFramework: ${bugData.bug.framework}\nCategory: ${bugData.bug.category}`;
+      const bugContext = `\`\`\`${bugData.language}\n${bugData.buggyCode}\n\`\`\`\nFramework: ${bugData.framework}\nCategory: ${bugData.category}`;
       sendText(`[NEW_BUG] New buggy code:\n\n${bugContext}\n\nIntroduce it. Don't reveal the bug. Include [BUG_SOLVED] when they find it.`);
     } catch {
       setMessages(prev => [...prev, { role: "ai", text: "No more bugs available! Great job!" }]);
@@ -201,7 +273,12 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
     return (
       <div className={styles.setupScreen}>
         <div className={styles.setupCard}>
-          <h1 className={styles.setupTitle}>🔍 Finding a bug...</h1>
+          <h1 className={styles.setupTitle}>🔍 Generating bug...</h1>
+          <p className={styles.setupSubtitle}>{progressMessage}</p>
+          <div className={styles.progressBarContainer}>
+            <div className={styles.progressBarFill} style={{ width: `${displayPercent}%` }} />
+          </div>
+          <p className={styles.progressPercent}>{displayPercent}%</p>
         </div>
       </div>
     );
@@ -304,11 +381,10 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
             </div>
           </div>
           <div className={styles.codeContent}>
-            <textarea
-              className={styles.codeEditor}
+            <CodeEditor
               value={editedCode}
-              onChange={(e) => handleCodeEdit(e.target.value)}
-              spellCheck={false}
+              onChange={handleCodeEdit}
+              language={bug?.language}
             />
           </div>
         </div>
@@ -337,7 +413,10 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
           <div className={styles.inputArea}>
             <div className={styles.micControls}>
               <button onClick={toggleMicrophone} className={`${styles.micBtn} ${isRecording ? styles.micBtnActive : styles.micBtnInactive}`}>
-                {isRecording ? "⏹ Mute" : "🎤 Unmute"}
+                {isRecording ? "⏹ Mute" : "🎙 Unmute"}
+              </button>
+              <button onClick={toggleAiAudio} className={`${styles.micBtn} ${isAiMuted ? styles.micBtnInactive : styles.micBtnActive}`}>
+                {isAiMuted ? "▶️ Resume AI" : "⏸️ Pause AI"}
               </button>
             </div>
             <div className={styles.inputRow}>

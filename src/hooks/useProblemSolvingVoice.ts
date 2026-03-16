@@ -8,7 +8,7 @@ import {
 import { GoogleGenAI } from "@google/genai";
 import type { Session } from "@google/genai";
 import { useAudioPlayback } from "@/hooks/useAudioPlayback";
-import { buildHuntIntroPrompt, HUNT_INTRO_FALLBACK } from "@/config/prompts";
+import { buildSolveIntroPrompt, SOLVE_INTRO_FALLBACK } from "@/config/prompts";
 import * as traceClient from "@/lib/traceClient";
 
 export interface VoiceTranscript {
@@ -16,34 +16,32 @@ export interface VoiceTranscript {
   text: string;
 }
 
-interface UseHuntVoiceOptions {
+interface UseProblemSolvingVoiceOptions {
   onTranscript?: (t: VoiceTranscript) => void;
-  onBugSolved?: () => void;
+  onProblemSolved?: () => void;
   onReconnecting?: () => void;
   onReconnected?: () => void;
 }
 
-export interface UseHuntVoiceReturn {
+export interface UseProblemSolvingVoiceReturn {
   isConnected: boolean;
   isRecording: boolean;
   isSpeaking: boolean;
   isReconnecting: boolean;
   isAiMuted: boolean;
-  startSession: (bugContext?: string) => Promise<void>;
+  startSession: (problemContext?: string) => Promise<void>;
   stopSession: () => void;
   toggleMicrophone: () => void;
   toggleAiAudio: () => void;
   sendText: (text: string) => void;
   sendCodeUpdate: (code: string) => void;
-  postSessionReport: any;
 }
 
-export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceReturn {
+export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = {}): UseProblemSolvingVoiceReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isAiMuted, setIsAiMuted] = useState(false);
-  const [postSessionReport, setPostSessionReport] = useState<any>(null);
 
   const fullTranscriptRef = useRef<string>("");
 
@@ -57,14 +55,14 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
     isSpeaking, audioContextRef,
-  } = useAudioPlayback("[Hunt]");
+  } = useAudioPlayback("[Solve]");
 
   // ── Tracing session ID ──
   const traceSessionIdRef = useRef<string>("");
 
   // ── Session Resumption ──
   const resumptionHandleRef = useRef<string | undefined>(undefined);
-  const bugContextRef = useRef<string | undefined>(undefined);
+  const problemContextRef = useRef<string | undefined>(undefined);
   const reconnectCountRef = useRef(0);
   const MAX_RECONNECTS = 2;
 
@@ -85,7 +83,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   }, []);
 
   const sendCodeUpdate = useCallback((code: string) => {
-    sendText(`[CODE_UPDATE] The developer edited the code:\n\`\`\`\n${code}\n\`\`\``);
+    sendText(`[CODE_UPDATE] The developer edited their solution:\n\`\`\`\n${code}\n\`\`\``);
   }, [sendText]);
 
   // ── Stop Session ──
@@ -107,21 +105,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
       traceSessionIdRef.current = "";
     }
 
-    if (fullTranscriptRef.current) {
-      // Send the session transcript to our ADK backend for evaluation
-      fetch('/api/summarize-session', {
-        method: 'POST',
-        body: JSON.stringify({ transcript: fullTranscriptRef.current }),
-        headers: { 'Content-Type': 'application/json' }
-      })
-      .then(res => res.json())
-      .then(data => {
-        setPostSessionReport(data);
-      })
-      .catch(err => console.error("[Hunt] Failed to get session summary:", err));
-      
-      fullTranscriptRef.current = ""; // Reset for next session
-    }
+    fullTranscriptRef.current = "";
   }, [flushAudioQueue]);
 
   // ── Toggle Microphone ──
@@ -136,11 +120,10 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
       track.enabled = newEnabled;
       setIsRecording(newEnabled);
 
-      // Tell server to flush cached audio when muting
       if (!newEnabled && session) {
         try {
           session.sendRealtimeInput({ audioStreamEnd: true });
-          console.log("[Hunt] 🔇 Sent audioStreamEnd (mic muted)");
+          console.log("[Solve] 🔇 Sent audioStreamEnd (mic muted)");
         } catch { /* session may be closing */ }
       }
     }
@@ -154,26 +137,23 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     setIsAiMuted(next);
     if (next) {
       flushAudioQueue();
-      console.log("[Hunt] ⏸️ AI audio paused");
+      console.log("[Solve] ⏸️ AI audio paused");
     } else {
-      console.log("[Hunt] ▶️ AI audio resumed");
+      console.log("[Solve] ▶️ AI audio resumed");
     }
   }, [flushAudioQueue]);
 
   // ── Start Session ──
 
-  const startSession = async (bugContext?: string) => {
-    // Clean up any existing connection first
+  const startSession = async (problemContext?: string) => {
     if (sessionRef.current) {
       sessionRef.current = null;
     }
-    setPostSessionReport(null);
     fullTranscriptRef.current = "";
 
     try {
-      const ephemeralToken = await fetchVoiceToken("hunt");
+      const ephemeralToken = await fetchVoiceToken("solve");
       
-      // Initialize the official Google GenAI SDK using the ephemeral token
       const ai = new GoogleGenAI({
         apiKey: ephemeralToken,
         httpOptions: { apiVersion: 'v1alpha' },
@@ -181,11 +161,11 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
 
       // ── Start session trace ──
       traceSessionIdRef.current = traceClient.generateSessionId();
-      traceClient.startTrace(traceSessionIdRef.current, "hunt", {
-        hasBugContext: !!bugContext,
+      traceClient.startTrace(traceSessionIdRef.current, "solve", {
+        hasProblemContext: !!problemContext,
       });
 
-      // Helper: start mic + send bug context (called after setupComplete)
+      // Helper: start mic + send problem context
       const startMicAndContext = async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -215,17 +195,17 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
             }
           };
 
-          // Send bug context
-          const introText = bugContext
-            ? buildHuntIntroPrompt(bugContext)
-            : HUNT_INTRO_FALLBACK;
+          // Send problem context
+          const introText = problemContext
+            ? buildSolveIntroPrompt(problemContext)
+            : SOLVE_INTRO_FALLBACK;
 
           sessionRef.current?.sendClientContent({
             turns: [{ role: "user", parts: [{ text: introText }] }],
             turnComplete: true,
           });
         } catch (micError) {
-          console.error("[Hunt] Microphone error:", micError);
+          console.error("[Solve] Microphone error:", micError);
           stopSession();
         }
       };
@@ -234,6 +214,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
         config: {
           responseModalities: ["AUDIO"] as any,
+          systemInstruction: "You are a patient coding coach. Your top priority is respecting the developer's thinking time. When they are silent, they are thinking — wait for them to speak. Keep every response to 2-3 sentences max. Ask only one question at a time, then wait. Guide with questions only, never write code or reveal solutions. Match their energy — if they are quiet and focused, be brief. Only speak when spoken to, or when acknowledging their code updates.",
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
           } as any,
@@ -245,7 +226,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         },
         callbacks: {
           onopen: () => {
-            console.log("[Hunt] ✅ SDK Session Setup complete, starting mic...");
+            console.log("[Solve] ✅ SDK Session Setup complete, starting mic...");
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.open');
             setIsConnected(true);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.setupComplete');
@@ -262,14 +243,14 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
 
               // GoAway warning
               if (data.goAway) {
-                console.warn(`[Hunt] ⚠️ GoAway received — timeLeft: ${data.goAway.timeLeft}`);
+                console.warn(`[Solve] ⚠️ GoAway received — timeLeft: ${data.goAway.timeLeft}`);
                 traceClient.traceEvent(traceSessionIdRef.current, 'ws.goAway', {
                   metadata: { timeLeft: data.goAway.timeLeft },
                 });
               }
 
               if (data.serverContent?.error) {
-                 console.error("[Hunt] ❌ SDK Server error:", JSON.stringify(data.serverContent.error));
+                 console.error("[Solve] ❌ SDK Server error:", JSON.stringify(data.serverContent.error));
                  return;
               }
 
@@ -285,7 +266,6 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
               // Audio chunks
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
-                   // The SDK abstracts the message structure, the audio data comes back as part.inlineData
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
@@ -293,13 +273,10 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
               }
 
               // AI transcript — only surface spoken text, not thinking tokens.
-              // Native audio model emits text-only parts as internal reasoning.
-              // We only show text that accompanies audio output (actual speech).
               if (data.serverContent?.modelTurn?.parts) {
                  const parts = data.serverContent.modelTurn.parts;
                  const hasAudio = parts.some((p: any) => p.inlineData?.data || p.inlineData?.mimeType?.startsWith("audio/pcm"));
 
-                 // Only surface text when this turn also contains audio (spoken transcript)
                  if (hasAudio) {
                    for (const part of parts) {
                      if (part.text) {
@@ -307,9 +284,9 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
                        fullTranscriptRef.current += `\nCoach: ${text}`;
                        traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
                        optionsRef.current.onTranscript?.({ role: "ai", text });
-                       if (text.includes("[BUG_SOLVED]") || text.includes("[PROBLEM_SOLVED]")) {
-                         traceClient.traceEvent(traceSessionIdRef.current, 'hunt.bug.solved');
-                         optionsRef.current.onBugSolved?.();
+                       if (text.includes("[PROBLEM_SOLVED]")) {
+                         traceClient.traceEvent(traceSessionIdRef.current, 'solve.problem.solved');
+                         optionsRef.current.onProblemSolved?.();
                        }
                      }
                    }
@@ -317,15 +294,15 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
               }
 
             } catch (e) {
-              console.error("[Hunt] Failed to parse SDK message", e);
+              console.error("[Solve] Failed to parse SDK message", e);
             }
           },
           onerror: (err) => {
-             console.error("[Hunt] SDK Error:", err);
+             console.error("[Solve] SDK Error:", err);
              stopSession();
           },
           onclose: () => {
-             console.log("[Hunt] SDK Session closed (server-initiated)");
+             console.log("[Solve] SDK Session closed (server-initiated)");
              traceClient.traceEvent(traceSessionIdRef.current, 'ws.close');
              attemptReconnect();
           }
@@ -333,11 +310,11 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
       });
       
       sessionRef.current = session;
-      bugContextRef.current = bugContext;
+      problemContextRef.current = problemContext;
       reconnectCountRef.current = 0;
 
     } catch (error) {
-      console.error("[Hunt] Failed to start:", error);
+      console.error("[Solve] Failed to start:", error);
       throw error;
     }
   };
@@ -349,25 +326,25 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     const attempt = reconnectCountRef.current;
 
     if (attempt > MAX_RECONNECTS) {
-      console.warn(`[Hunt] Max reconnect attempts (${MAX_RECONNECTS}) reached — ending session`);
+      console.warn(`[Solve] Max reconnect attempts (${MAX_RECONNECTS}) reached — ending session`);
       stopSession();
       return;
     }
 
     const handle = resumptionHandleRef.current;
     if (!handle) {
-      console.warn('[Hunt] No resumption handle available — cannot reconnect');
+      console.warn('[Solve] No resumption handle available — cannot reconnect');
       stopSession();
       return;
     }
 
-    console.log(`[Hunt] 🔄 Reconnecting (attempt ${attempt}/${MAX_RECONNECTS}) with handle: ${handle.slice(0, 20)}...`);
+    console.log(`[Solve] 🔄 Reconnecting (attempt ${attempt}/${MAX_RECONNECTS}) with handle: ${handle.slice(0, 20)}...`);
     setIsReconnecting(true);
     optionsRef.current.onReconnecting?.();
     sessionRef.current = null;
 
     try {
-      const ephemeralToken = await fetchVoiceToken("hunt", { resumptionHandle: handle });
+      const ephemeralToken = await fetchVoiceToken("solve", { resumptionHandle: handle });
       const ai = new GoogleGenAI({
         apiKey: ephemeralToken,
         httpOptions: { apiVersion: 'v1alpha' },
@@ -392,7 +369,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         },
         callbacks: {
           onopen: () => {
-            console.log(`[Hunt] ✅ Reconnected (attempt ${attempt})`);
+            console.log(`[Solve] ✅ Reconnected (attempt ${attempt})`);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { attempt } });
             setIsReconnecting(false);
             setIsConnected(true);
@@ -405,36 +382,42 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
                 resumptionHandleRef.current = data.sessionResumptionUpdate.newHandle;
               }
               if (data.goAway) {
-                console.warn(`[Hunt] ⚠️ GoAway received — timeLeft: ${data.goAway.timeLeft}`);
+                console.warn(`[Solve] ⚠️ GoAway received — timeLeft: ${data.goAway.timeLeft}`);
               }
               if (data.serverContent?.error) return;
               if (data.serverContent?.turnComplete) clearCompletedSources();
               if (data.serverContent?.interrupted) flushAudioQueue();
               if (data.serverContent?.modelTurn?.parts) {
-                for (const part of data.serverContent.modelTurn.parts) {
+                const parts = data.serverContent.modelTurn.parts;
+                const hasAudio = parts.some((p: any) => p.inlineData?.data || p.inlineData?.mimeType?.startsWith("audio/pcm"));
+                for (const part of parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
-                  if (part.text) {
-                    fullTranscriptRef.current += `\nCoach: ${part.text}`;
-                    optionsRef.current.onTranscript?.({ role: "ai", text: part.text });
-                    if (part.text.includes("[BUG_SOLVED]")) {
-                      optionsRef.current.onBugSolved?.();
+                }
+                if (hasAudio) {
+                  for (const part of parts) {
+                    if (part.text) {
+                      fullTranscriptRef.current += `\nCoach: ${part.text}`;
+                      optionsRef.current.onTranscript?.({ role: "ai", text: part.text });
+                      if (part.text.includes("[PROBLEM_SOLVED]")) {
+                        optionsRef.current.onProblemSolved?.();
+                      }
                     }
                   }
                 }
               }
             } catch (e) {
-              console.error("[Hunt] Failed to parse SDK message (reconnect)", e);
+              console.error("[Solve] Failed to parse SDK message (reconnect)", e);
             }
           },
           onerror: (err) => {
-            console.error("[Hunt] SDK Error (reconnect):", err);
+            console.error("[Solve] SDK Error (reconnect):", err);
             setIsReconnecting(false);
             stopSession();
           },
           onclose: () => {
-            console.log(`[Hunt] SDK Session closed again (server-initiated)`);
+            console.log(`[Solve] SDK Session closed again (server-initiated)`);
             attemptReconnect();
           }
         }
@@ -443,7 +426,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
       sessionRef.current = newSession;
 
     } catch (error) {
-      console.error(`[Hunt] Reconnect attempt ${attempt} failed:`, error);
+      console.error(`[Solve] Reconnect attempt ${attempt} failed:`, error);
       setIsReconnecting(false);
       stopSession();
     }
@@ -452,6 +435,6 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   return {
     isConnected, isRecording, isSpeaking, isReconnecting, isAiMuted,
     startSession, stopSession, toggleMicrophone, toggleAiAudio,
-    sendText, sendCodeUpdate, postSessionReport
+    sendText, sendCodeUpdate,
   };
 }

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { getLangfuseServer } from "@/lib/langfuse";
-import { HUNT_VOICE_SYSTEM_PROMPT, PAIR_VOICE_SYSTEM_PROMPT, buildGroundedInstruction } from "@/config/prompts";
+import { HUNT_VOICE_SYSTEM_PROMPT, PAIR_VOICE_SYSTEM_PROMPT, SOLVE_VOICE_SYSTEM_PROMPT, buildGroundedInstruction } from "@/config/prompts";
 import type { ReviewFinding } from "@/config/prompts";
 
 const SYSTEM_PROMPTS: Record<string, string> = {
   hunt: HUNT_VOICE_SYSTEM_PROMPT,
   pair: PAIR_VOICE_SYSTEM_PROMPT,
+  solve: SOLVE_VOICE_SYSTEM_PROMPT,
 };
 
 /**
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const mode = (body.mode === "pair") ? "pair" : "hunt";
+    const mode = (["pair", "hunt", "solve"].includes(body.mode)) ? body.mode : "hunt";
 
     // Build system instruction: use grounded version if review data is provided
     let systemInstruction: string;

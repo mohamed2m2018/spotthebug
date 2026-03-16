@@ -46,9 +46,11 @@ export interface UsePairVoiceReturn {
   isScreenSharing: boolean;
   isSpeaking: boolean;
   isReconnecting: boolean;
+  isAiMuted: boolean;
   startSession: (context?: PairSessionContext) => Promise<void>;
   stopSession: () => void;
   toggleMicrophone: () => void;
+  toggleAiAudio: () => void;
   startScreenShare: () => Promise<void>;
   stopScreenShare: () => void;
   sendText: (text: string) => void;
@@ -59,6 +61,7 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   const [isRecording, setIsRecording] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [isAiMuted, setIsAiMuted] = useState(false);
 
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -88,6 +91,9 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   const sessionContextRef = useRef<PairSessionContext | undefined>(undefined);
   const reconnectCountRef = useRef(0);
   const MAX_RECONNECTS = 2;
+
+  // ── AI Mute (pause AI audio output) ──
+  const aiMutedRef = useRef(false);
 
   // ── Text Sending ──
 
@@ -221,13 +227,36 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
 
   const toggleMicrophone = useCallback(() => {
     const stream = streamRef.current;
+    const session = sessionRef.current;
     if (!stream) return;
     const track = stream.getAudioTracks()[0];
     if (track) {
-      track.enabled = !track.enabled;
-      setIsRecording(track.enabled);
+      const newEnabled = !track.enabled;
+      track.enabled = newEnabled;
+      setIsRecording(newEnabled);
+
+      if (!newEnabled && session) {
+        try {
+          session.sendRealtimeInput({ audioStreamEnd: true });
+          console.log("[Pair] 🔇 Sent audioStreamEnd (mic muted)");
+        } catch { /* session may be closing */ }
+      }
     }
   }, []);
+
+  // ── Toggle AI Audio (pause/resume AI speech) ──
+
+  const toggleAiAudio = useCallback(() => {
+    const next = !aiMutedRef.current;
+    aiMutedRef.current = next;
+    setIsAiMuted(next);
+    if (next) {
+      flushAudioQueue();
+      console.log("[Pair] ⏸️ AI audio paused");
+    } else {
+      console.log("[Pair] ▶️ AI audio resumed");
+    }
+  }, [flushAudioQueue]);
 
   // ── Start Session ──
 
@@ -525,7 +554,7 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
                     audioPartsCount++;
                     // Decode base64 to arraybuffer if needed (SDK returns string data)
-                    playAudioChunk(part.inlineData.data);
+                    if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
               }
@@ -713,7 +742,7 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
-                    playAudioChunk(part.inlineData.data);
+                    if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                   if (part.text) {
                     optionsRef.current.onTranscript?.({ role: "ai", text: part.text });
@@ -748,8 +777,8 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   };
 
   return {
-    isConnected, isRecording, isScreenSharing, isSpeaking, isReconnecting,
-    startSession, stopSession, toggleMicrophone,
+    isConnected, isRecording, isScreenSharing, isSpeaking, isReconnecting, isAiMuted,
+    startSession, stopSession, toggleMicrophone, toggleAiAudio,
     startScreenShare, stopScreenShare, sendText,
   };
 }

@@ -78,8 +78,8 @@ export default function PairSession({ onEnd }: PairSessionProps) {
   }, []);
 
   const {
-    isConnected, isRecording, isScreenSharing, isSpeaking,
-    startSession, stopSession, toggleMicrophone,
+    isConnected, isRecording, isScreenSharing, isSpeaking, isAiMuted,
+    startSession, stopSession, toggleMicrophone, toggleAiAudio,
     startScreenShare, stopScreenShare, sendText,
   } = usePairVoice({
     onTranscript: handleTranscript,
@@ -512,6 +512,7 @@ export default function PairSession({ onEnd }: PairSessionProps) {
         </div>
         <div class="controls">
           <button class="mic-active" id="pip-mic">⏹ Mute</button>
+          <button class="mic-active" id="pip-pause-ai">⏸️ Pause AI</button>
           <button class="end-btn" id="pip-end">⏹ End</button>
         </div>
         <button class="back-btn" id="pip-back">↩ Back to Browser</button>
@@ -541,6 +542,18 @@ export default function PairSession({ onEnd }: PairSessionProps) {
         }
         const label = pipWindow.document.getElementById("pip-avatar-label");
         if (label) label.textContent = pipMicMuted ? "Muted" : "Listening...";
+      });
+
+      // ── Pause AI toggle with reactive button UI ──
+      let pipAiMuted = false;
+      const pauseAiBtn = pipWindow.document.getElementById("pip-pause-ai");
+      pauseAiBtn?.addEventListener("click", () => {
+        toggleAiAudio();
+        pipAiMuted = !pipAiMuted;
+        if (pauseAiBtn) {
+          pauseAiBtn.textContent = pipAiMuted ? "▶️ Resume AI" : "⏸️ Pause AI";
+          pauseAiBtn.className = pipAiMuted ? "mic-inactive" : "mic-active";
+        }
       });
 
       // ── End session (full close — no in-page fallback) ──
@@ -1038,7 +1051,10 @@ export default function PairSession({ onEnd }: PairSessionProps) {
                 onClick={toggleMicrophone}
                 className={`${styles.micBtn} ${isRecording ? styles.micBtnActive : styles.micBtnInactive}`}
               >
-                {isRecording ? "⏹ Mute" : "🎤 Unmute"}
+                {isRecording ? "⏹ Mute" : "🎙 Unmute"}
+              </button>
+              <button onClick={toggleAiAudio} className={`${styles.micBtn} ${isAiMuted ? styles.micBtnInactive : styles.micBtnActive}`}>
+                {isAiMuted ? "▶️ Resume AI" : "⏸️ Pause AI"}
               </button>
             </div>
             <div className={styles.inputRow}>
