@@ -152,7 +152,7 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
       canvas.height = video.videoHeight * scale;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      const dataUrl = canvas.toDataURL('image/jpeg', 1.0);
       const base64Data = dataUrl.split(',')[1];
       const sizeKB = Math.round(base64Data.length / 1024);
 
