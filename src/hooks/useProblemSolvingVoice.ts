@@ -88,6 +88,11 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const audioChunkCountRef = useRef(0); // diag: audio chunks received this turn
   const voiceRetryCountRef = useRef(0); // consecutive nudges on a text-only streak (capped)
   const MAX_VOICE_RETRIES = 3;
+  // A session can get STUCK in text-only mode from its very first turn (no audio
+  // ever). In-session nudges never recover it — only a brand-new session does.
+  const sessionHadAudioRef = useRef(false); // has THIS session produced any audio at all?
+  const hardRestartsRef = useRef(0);        // fresh-session restarts triggered by a stuck-text-only session
+  const MAX_HARD_RESTARTS = 2;
   // Watchdog: gemini-3.1-flash-live can go SILENT after a text turn — no audio AND
   // no turnComplete, no error (google-gemini/cookbook#1226). The turnComplete-based
   // retry can't fire there, so a timer re-nudges if no audio arrives in time.
@@ -96,6 +101,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   // Reassigned each render; called via ref so sendTurn (a stable useCallback) can
   // invoke it without a dependency cycle.
   const armWatchdogRef = useRef<() => void>(() => {});
+  // Text-only-turn recovery (shared by the primary + reconnect message handlers).
+  const textOnlyRecoveryRef = useRef<() => void>(() => {});
   const clearWatchdog = () => { if (audioWatchdogRef.current) { clearTimeout(audioWatchdogRef.current); audioWatchdogRef.current = null; } };
 
   const {
@@ -276,6 +283,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     reconnectCountRef.current = 0;
     clientBufRef.current = [];
     voiceRetryCountRef.current = 0;
+    sessionHadAudioRef.current = false;
+    hardRestartsRef.current = 0;
     turnHadTranscriptRef.current = false;
     fullTranscriptRef.current = "";
 
@@ -434,16 +443,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 // text-only streak — a single retry can itself come back text-only,
                 // which left the session permanently silent before.
                 console.log(`[Solve] 🏁 turnEnd audio=${turnHadAudioRef.current} transcript=${turnHadTranscriptRef.current} chunks=${audioChunkCountRef.current}`);
-                if (turnHadAudioRef.current) {
-                  voiceRetryCountRef.current = 0; // audio flowing → reset the streak
-                } else if (turnHadTranscriptRef.current && voiceRetryCountRef.current < MAX_VOICE_RETRIES && !aiMutedRef.current && !endedRef.current) {
-                  voiceRetryCountRef.current++;
-                  console.log(`[Solve] 🔁 text-only turn → voiceRetry nudge #${voiceRetryCountRef.current}`);
-                  traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry', { metadata: { attempt: voiceRetryCountRef.current } });
-                  sendTurn("اتفضل كمّل.");
-                } else if (!turnHadAudioRef.current && turnHadTranscriptRef.current) {
-                  console.log(`[Solve] ⚠️ text-only turn but retry cap reached (${voiceRetryCountRef.current}) — staying silent`);
-                }
+                textOnlyRecoveryRef.current();
                 turnHadAudioRef.current = false;
                 turnHadTranscriptRef.current = false;
                 audioChunkCountRef.current = 0;
@@ -461,6 +461,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                     audioChunkCountRef.current++;
                     if (!turnHadAudioRef.current) {
                       turnHadAudioRef.current = true;
+                      sessionHadAudioRef.current = true; // this session can speak
+                      hardRestartsRef.current = 0;       // healthy again → allow future restarts
                       clearWatchdog(); // audio is flowing → cancel the nudge timer
                       traceClient.traceEvent(traceSessionIdRef.current, 'ai.audioStart', {
                         metadata: { ctxState: audioContextRef.current?.state ?? 'null', aiMuted: aiMutedRef.current },
@@ -573,6 +575,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     const myGen = ++sessionGenRef.current;
     try { oldSession?.close?.(); } catch { /* already closed */ }
     connOpenedAtRef.current = 0;
+    sessionHadAudioRef.current = false; // new WS — must prove it can speak (else hard-restart)
 
     const onDrop = () => {
       if (myGen !== sessionGenRef.current) return; // stale
@@ -635,7 +638,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
                     audioChunkCountRef.current++;
-                    if (!turnHadAudioRef.current) { turnHadAudioRef.current = true; clearWatchdog(); }
+                    if (!turnHadAudioRef.current) { turnHadAudioRef.current = true; sessionHadAudioRef.current = true; hardRestartsRef.current = 0; clearWatchdog(); }
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
@@ -657,14 +660,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                   metadata: { audioReceived: turnHadAudioRef.current, audioChunks: audioChunkCountRef.current, phase: 'reconnect' },
                 });
                 console.log(`[Solve] 🏁 turnEnd(reconnect) audio=${turnHadAudioRef.current} transcript=${turnHadTranscriptRef.current} chunks=${audioChunkCountRef.current}`);
-                if (turnHadAudioRef.current) {
-                  voiceRetryCountRef.current = 0;
-                } else if (turnHadTranscriptRef.current && voiceRetryCountRef.current < MAX_VOICE_RETRIES && !aiMutedRef.current && !endedRef.current) {
-                  voiceRetryCountRef.current++;
-                  console.log(`[Solve] 🔁 text-only turn(reconnect) → voiceRetry nudge #${voiceRetryCountRef.current}`);
-                  traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry', { metadata: { attempt: voiceRetryCountRef.current, phase: 'reconnect' } });
-                  sendTurn("اتفضل كمّل.");
-                }
+                textOnlyRecoveryRef.current();
                 turnHadAudioRef.current = false;
                 turnHadTranscriptRef.current = false;
                 audioChunkCountRef.current = 0;
@@ -727,6 +723,33 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       setIsReconnecting(false);
       if (!endedRef.current) { failuresRef.current++; scheduleReconnect(); }
     }
+  };
+
+  // Recovery for a turn that came back text-only (transcript, no audio). Shared by
+  // the primary + reconnect handlers.
+  //  - If the session NEVER produced audio (stuck in text-only mode from the start),
+  //    in-session nudges are useless — only a brand-new session recovers. Restart fresh.
+  //  - Otherwise it's a mid-session blip → nudge to continue (capped).
+  textOnlyRecoveryRef.current = () => {
+    if (turnHadAudioRef.current) { voiceRetryCountRef.current = 0; return; }
+    if (!turnHadTranscriptRef.current || aiMutedRef.current || endedRef.current) return;
+    if (!sessionHadAudioRef.current && hardRestartsRef.current < MAX_HARD_RESTARTS) {
+      hardRestartsRef.current++;
+      voiceRetryCountRef.current = 0;
+      console.log(`[Solve] ♻️ stuck text-only from session start → fresh restart #${hardRestartsRef.current}`);
+      try { traceClient.traceEvent(traceSessionIdRef.current, 'ai.hardRestart', { metadata: { n: hardRestartsRef.current } }); } catch { /* noop */ }
+      resumptionHandleRef.current = undefined; // force a brand-new session (resume can't fix a stuck one)
+      attemptReconnect();
+      return;
+    }
+    if (voiceRetryCountRef.current < MAX_VOICE_RETRIES) {
+      voiceRetryCountRef.current++;
+      console.log(`[Solve] 🔁 text-only turn → voiceRetry nudge #${voiceRetryCountRef.current}`);
+      try { traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry', { metadata: { attempt: voiceRetryCountRef.current } }); } catch { /* noop */ }
+      sendTurn("اتفضل كمّل.");
+      return;
+    }
+    console.log(`[Solve] ⚠️ text-only: nudges + restarts exhausted — staying silent`);
   };
 
   return {

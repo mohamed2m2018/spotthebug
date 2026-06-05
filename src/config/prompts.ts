@@ -443,7 +443,7 @@ export function buildSqlIntroPrompt(problemContext: string): string {
   if (problemContext.startsWith("CONTINUING SESSION")) {
     return `${problemContext}
 
-In Arabic: in ONE short sentence recap where you stopped, then continue to the NEXT step — one small beat, end with a question, then STOP. Do NOT greet again, do NOT re-explain from the beginning. Speak Arabic.`;
+كمّل بالعربي: في جملة واحدة قصيرة لخّص إحنا وقفنا فين، وبعدين كمّل الخطوة اللي بعدها — فكرة واحدة صغيرة، اسأل سؤال واحد وبعدين اسكت واستنى. متعيدش الترحيب ولا الشرح من الأول. اتكلم عربي.`;
   }
   return `Start a SQL learning session on this topic:
 
@@ -534,7 +534,7 @@ export function buildSysdesignIntroPrompt(problemContext: string): string {
   if (problemContext.startsWith("CONTINUING SESSION")) {
     return `${problemContext}
 
-In Arabic: in ONE short sentence recap where you stopped, then continue to the NEXT step — one small beat, end with a question, then STOP. Do NOT greet again, do NOT re-explain from the beginning. Speak Arabic.`;
+كمّل بالعربي: في جملة واحدة قصيرة لخّص إحنا وقفنا فين، وبعدين كمّل الخطوة اللي بعدها — فكرة واحدة صغيرة، اسأل سؤال واحد وبعدين اسكت واستنى. متعيدش الترحيب ولا الشرح من الأول. اتكلم عربي.`;
   }
   return `Start a backend / system-design learning session on this topic:
 

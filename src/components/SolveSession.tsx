@@ -321,8 +321,10 @@ export default function SolveSession({
             .find((t) => t && !t.startsWith("Session started"))
         : "";
       const recapNote = lastAiSaid ? ` آخر نقطة وقفنا عندها: "${lastAiSaid.slice(0, 180)}".` : "";
+      // Arabic-dominant on purpose: an English-heavy first turn pushes
+      // gemini-3.1-flash-live into a text-only mode for the whole session.
       const problemContext = resuming
-        ? `CONTINUING SESSION — topic: **${conceptTopic}**.${recapNote} Pick up from the NEXT step. Do NOT greet again and do NOT re-explain what was already covered.`
+        ? `CONTINUING SESSION — جلسة مكمّلة. الموضوع: **${conceptTopic}**.${recapNote} كمّل من النقطة اللي بعدها، ومتبدأش من الأول.`
         : mode === "sql"
         ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\nTeach the concept first (across several short turns), then give the developer a query to write and Run.`
         : mode === "sysdesign"
