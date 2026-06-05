@@ -680,7 +680,7 @@ export default function SolveSession({
 
           <div className={styles.conversationArea} ref={conversationRef}>
             {messages.map((msg, i) => (
-              <div key={i} className={`${styles.message} ${msg.role === "ai" ? styles.messageAi : styles.messageUser}`}>
+              <div key={i} dir="auto" className={`${styles.message} ${msg.role === "ai" ? styles.messageAi : styles.messageUser}`}>
                 {msg.text}
               </div>
             ))}
@@ -699,6 +699,7 @@ export default function SolveSession({
               <input
                 className={styles.textInput}
                 placeholder="Type a message..."
+                dir="auto"
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && sendMessage()}
