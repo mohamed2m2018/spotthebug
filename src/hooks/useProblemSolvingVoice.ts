@@ -575,6 +575,10 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     const myGen = ++sessionGenRef.current;
     try { oldSession?.close?.(); } catch { /* already closed */ }
     connOpenedAtRef.current = 0;
+    // Was the session we're replacing STUCK (never spoke)? If so the new fresh
+    // session should re-send the short TOPIC intro; otherwise (mid-session drop)
+    // it should just continue without re-greeting. Capture BEFORE resetting.
+    const recoveringFromStuck = !sessionHadAudioRef.current;
     sessionHadAudioRef.current = false; // new WS — must prove it can speak (else hard-restart)
 
     const onDrop = () => {
@@ -692,29 +696,33 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           try { newSession.sendClientContent({ turns: [{ role: "user", parts: [{ text: t }] }], turnComplete: true }); } catch { /* noop */ }
         }
       } else {
-        // FRESH session lost all context — replay recent history + current code so
-        // the coach continues seamlessly. CRITICAL: client content with
-        // role:"model" is rejected by the Live API (close 1007 "invalid argument")
-        // — which silently killed every fresh reconnect and caused a reconnect
-        // storm. So fold the transcript into ONE role:"user" context turn (labelled
-        // lines) instead of alternating user/model turns.
+        // FRESH session (no server context). Keep the turn SHORT — a long turn
+        // makes the model reply text-only. NEVER send role:"model" turns (Live API
+        // rejects them → close 1007).
         try {
-          const ctx = optionsRef.current.getResumeContext?.();
-          const histLines = (ctx?.messages || []).slice(-6)
-            .map((m) => {
-              const text = m.text.replace(/\[[A-Z_]+\]/g, "").trim().slice(0, 220);
-              return text ? `${m.role === "ai" ? "المدرّس" : "أنا"}: ${text}` : "";
-            })
-            .filter(Boolean)
-            .join("\n")
-            .slice(-1200); // keep the recap turn small enough to reliably get audio
-          const code = ctx?.code?.trim() ? ctx.code.slice(0, 1500) : "";
-          const codeNote = code ? `الكود الحالي عندي:\n\`\`\`\n${code}\n\`\`\`\n` : "";
-          const recap = histLines ? `سياق المحادثة قبل قطع الاتصال:\n${histLines}\n\n` : "";
-          newSession.sendClientContent({
-            turns: [{ role: "user", parts: [{ text: `${recap}${codeNote}اتفضل كمّل من اللي وقفنا عنده، من غير ما تبدأ من الأول.` }] }],
-            turnComplete: true,
-          });
+          if (recoveringFromStuck) {
+            // The replaced session never spoke (stuck text-only from the start).
+            // Re-send the SHORT topic intro — proven to reliably get audio.
+            const intro = INTRO_BUILDERS[modeRef.current](problemContextRef.current || "");
+            newSession.sendClientContent({ turns: [{ role: "user", parts: [{ text: intro }] }], turnComplete: true });
+          } else {
+            // Mid-session drop (it had been speaking). Continue WITHOUT re-greeting;
+            // short recap only (no big code block → keep it audio-reliable).
+            const ctx = optionsRef.current.getResumeContext?.();
+            const histLines = (ctx?.messages || []).slice(-4)
+              .map((m) => {
+                const text = m.text.replace(/\[[A-Z_]+\]/g, "").trim().slice(0, 160);
+                return text ? `${m.role === "ai" ? "المدرّس" : "أنا"}: ${text}` : "";
+              })
+              .filter(Boolean)
+              .join("\n")
+              .slice(-700);
+            const recap = histLines ? `سياق سريع:\n${histLines}\n\n` : "";
+            newSession.sendClientContent({
+              turns: [{ role: "user", parts: [{ text: `${recap}كمّل بالعربي من اللي وقفنا عنده، من غير ترحيب ومن غير ما تبدأ من الأول.` }] }],
+              turnComplete: true,
+            });
+          }
         } catch { /* noop */ }
       }
     } catch (error) {

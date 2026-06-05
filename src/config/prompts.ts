@@ -348,18 +348,14 @@ DELIVERY — CRITICAL:
 - PACE: speak calmly with natural pauses; give them time to absorb.`;
 
 /** Prompt sent as the first user message when a Solve session starts. */
+// Intro turns are kept SHORT on purpose: a long first turn reliably makes
+// gemini-3.1-flash-live reply text-only (no audio). All the teaching rules live
+// in the locked system prompt, so the turn only needs the topic + "start".
 export function buildSolveIntroPrompt(problemContext: string): string {
   if (problemContext.startsWith("CONTINUING SESSION")) {
-    return `${problemContext}
-
-In Arabic: in ONE short sentence recap where you stopped, then continue to the NEXT step — one small beat, end with a question, then STOP. Do NOT greet again, do NOT re-explain the concept from the beginning. Speak Arabic.`;
+    return `${problemContext}\n\nكمّل بالعربي في جملة قصيرة: لخّص وقفنا فين وكمّل الخطوة اللي بعدها، اسأل سؤال واحد وبعدين اسكت. متعيدش الترحيب ولا الشرح من الأول.`;
   }
-  return `Start a problem-solving session on this LeetCode-style problem:
-
-${problemContext}
-
-This is your FIRST message — keep it SHORT: ~2-4 sentences, roughly 15-25 seconds of speech. In Arabic: greet in one short sentence, then give ONLY the first beat — motivate WHY this pattern matters / what problem it solves — and end with ONE question, then STOP and wait.
-Hard limits for this first message: do NOT explain the whole concept, do NOT walk the full teaching arc, do NOT give the analogy AND the mechanism AND the example all at once, and do NOT pose the coding problem yet. You will build the depth over the NEXT turns, ONE small beat each, checking in between — and only later, once they grasp the pattern, pose the actual problem in the editor. Speak Arabic.`;
+  return `ابدأ الدرس دلوقتي على: ${problemContext}. رحّب بجملة واحدة قصيرة، اشرح أول فكرة بس، اسأل سؤال واحد، وبعدين اسكت.`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -445,11 +441,7 @@ export function buildSqlIntroPrompt(problemContext: string): string {
 
 كمّل بالعربي: في جملة واحدة قصيرة لخّص إحنا وقفنا فين، وبعدين كمّل الخطوة اللي بعدها — فكرة واحدة صغيرة، اسأل سؤال واحد وبعدين اسكت واستنى. متعيدش الترحيب ولا الشرح من الأول. اتكلم عربي.`;
   }
-  return `Start a SQL learning session on this topic:
-
-${problemContext}
-
-This is your FIRST message — keep it SHORT: ~2-4 sentences, roughly 15-25 seconds of speech. In Arabic: greet in one short sentence, then give ONLY the first beat (motivate the topic) and end with ONE question, then STOP and wait. Do NOT explain the whole topic or walk the full arc in this first message — build the depth over the NEXT turns, one small beat each. Speak Arabic.`;
+  return `ابدأ درس SQL دلوقتي على: ${problemContext}. رحّب بجملة واحدة قصيرة، اشرح أول فكرة بس، اسأل سؤال واحد، وبعدين اسكت.`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -536,11 +528,7 @@ export function buildSysdesignIntroPrompt(problemContext: string): string {
 
 كمّل بالعربي: في جملة واحدة قصيرة لخّص إحنا وقفنا فين، وبعدين كمّل الخطوة اللي بعدها — فكرة واحدة صغيرة، اسأل سؤال واحد وبعدين اسكت واستنى. متعيدش الترحيب ولا الشرح من الأول. اتكلم عربي.`;
   }
-  return `Start a backend / system-design learning session on this topic:
-
-${problemContext}
-
-This is your FIRST message — keep it SHORT: ~2-4 sentences, roughly 15-25 seconds of speech. In Arabic: greet in one short sentence, then give ONLY the first beat (motivate the topic) and end with ONE question, then STOP and wait. Do NOT explain the whole topic or walk the full arc in this first message — build the depth over the NEXT turns, one small beat each. The editor is a scratchpad for class/design sketches. Speak Arabic.`;
+  return `ابدأ درس باك-إند / system design دلوقتي على: ${problemContext}. رحّب بجملة واحدة قصيرة، اشرح أول فكرة بس، اسأل سؤال واحد، وبعدين اسكت.`;
 }
 
 /** Fallback intro when no problem context is provided. */

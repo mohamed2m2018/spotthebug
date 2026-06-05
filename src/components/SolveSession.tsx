@@ -9,7 +9,7 @@ import CodeEditor from "@/components/CodeEditor";
 import SyllabusSidebar from "@/components/SyllabusSidebar";
 import { recordSession } from "@/utils/recordSession";
 import { markCovered, useCovered } from "@/lib/coverage";
-import { SQL_SCHEMA_DESCRIPTION, SQL_SCHEMA_COMPACT } from "@/config/sqlSandbox";
+import { SQL_SCHEMA_DESCRIPTION } from "@/config/sqlSandbox";
 import { DSA_PROBLEM_DETAILS } from "@/config/syllabi";
 import { saveSession, type SavedSession } from "@/lib/sessionStore";
 import { appendJournal } from "@/lib/learningJournal";
@@ -308,28 +308,23 @@ export default function SolveSession({
       const resuming = !!(resumeState && resumeState.messages?.length);
       setCode(resuming ? (resumeState!.code || starter) : starter);
       setMessages(resuming ? resumeState!.messages : [{ role: "ai", text: "Session started! Let's learn this together." }]);
-      // Compact schema in the INTRO keeps the opening turn small (big intros →
-      // text-only/no audio). The full schema still shows in the problem panel.
-      const schemaNote = mode === "sql" ? `\n\n${SQL_SCHEMA_COMPACT}` : "";
-      // RESUME: a distinct "continue" prompt with a ONE-LINE recap of the last
-      // thing the coach said — so it picks up from the next step instead of
-      // re-greeting and re-teaching the whole concept from scratch (the old
-      // prompt told it to "teach the concept first", which restarted the lesson).
+      // CORE FIX: keep the first turn SHORT. A long intro turn reliably makes the
+      // native-audio model reply text-only (no audio) — proven in prod: the long
+      // intro = silent, the short reconnect turn = audio. So the intro now carries
+      // ONLY the topic (short); the builder wraps it in a short Arabic "start"
+      // line, and ALL teaching rules already live in the locked system prompt.
+      // RESUME passes a CONTINUING marker + one-line recap so it continues instead
+      // of re-greeting/re-teaching.
+      const shortTopic = dsaDetail ? dsaDetail.name : conceptTopic;
       const lastAiSaid = resuming
         ? [...resumeState!.messages].reverse()
             .map((m) => (m.role === "ai" ? m.text.replace(/\[[A-Z_]+\]/g, "").trim() : ""))
             .find((t) => t && !t.startsWith("Session started"))
         : "";
-      const recapNote = lastAiSaid ? ` آخر نقطة وقفنا عندها: "${lastAiSaid.slice(0, 180)}".` : "";
-      // Arabic-dominant on purpose: an English-heavy first turn pushes
-      // gemini-3.1-flash-live into a text-only mode for the whole session.
+      const recapNote = lastAiSaid ? ` آخر نقطة وقفنا عندها: "${lastAiSaid.slice(0, 160)}".` : "";
       const problemContext = resuming
-        ? `CONTINUING SESSION — جلسة مكمّلة. الموضوع: **${conceptTopic}**.${recapNote} كمّل من النقطة اللي بعدها، ومتبدأش من الأول.`
-        : mode === "sql"
-        ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\nTeach the concept first (across several short turns), then give the developer a query to write and Run.`
-        : mode === "sysdesign"
-        ? `Topic to teach: **${conceptTopic}**\n\nTeach the concept first (across several short turns), then give the developer a design to sketch.`
-        : `Problem to solve: **${conceptTopic}**\n\nTeach the underlying pattern first, concept-first, across several short turns; later pose this problem and have them solve it in the editor.`;
+        ? `CONTINUING SESSION — جلسة مكمّلة. الموضوع: **${shortTopic}**.${recapNote} كمّل من النقطة اللي بعدها، ومتبدأش من الأول.`
+        : shortTopic;
       try {
         await startSession(problemContext);
         setStarted(true);
