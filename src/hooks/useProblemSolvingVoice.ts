@@ -87,6 +87,15 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const audioChunkCountRef = useRef(0); // diag: audio chunks received this turn
   const voiceRetryCountRef = useRef(0); // consecutive nudges on a text-only streak (capped)
   const MAX_VOICE_RETRIES = 3;
+  // Watchdog: gemini-3.1-flash-live can go SILENT after a text turn — no audio AND
+  // no turnComplete, no error (google-gemini/cookbook#1226). The turnComplete-based
+  // retry can't fire there, so a timer re-nudges if no audio arrives in time.
+  const audioWatchdogRef = useRef<NodeJS.Timeout | null>(null);
+  const AUDIO_WATCHDOG_MS = 5000;
+  // Reassigned each render; called via ref so sendTurn (a stable useCallback) can
+  // invoke it without a dependency cycle.
+  const armWatchdogRef = useRef<() => void>(() => {});
+  const clearWatchdog = () => { if (audioWatchdogRef.current) { clearTimeout(audioWatchdogRef.current); audioWatchdogRef.current = null; } };
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -145,6 +154,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     const s = session ?? sessionRef.current;
     try {
       s?.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: true });
+      armWatchdogRef.current(); // expect an audio reply; nudge if it never comes
     } catch { /* session closing */ }
   }, []);
 
@@ -161,6 +171,25 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     sendText(`[CODE_UPDATE] Current code:\n\`\`\`\n${c}\n\`\`\``);
   }, [sendText]);
 
+  // Watchdog body (reassigned every render so it sees current refs). Fires if a
+  // sent turn produced no audio within the window — covers the silent-no-turnComplete
+  // failure the turnComplete-based retry can't catch.
+  armWatchdogRef.current = () => {
+    clearWatchdog();
+    audioWatchdogRef.current = setTimeout(() => {
+      audioWatchdogRef.current = null;
+      if (endedRef.current || aiMutedRef.current) return;
+      if (turnHadAudioRef.current) return;                       // audio did arrive
+      if (voiceRetryCountRef.current >= MAX_VOICE_RETRIES) return; // give up after cap
+      voiceRetryCountRef.current++;
+      try { traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceWatchdog', { metadata: { attempt: voiceRetryCountRef.current } }); } catch { /* noop */ }
+      try {
+        sessionRef.current?.sendClientContent({ turns: [{ role: "user", parts: [{ text: "اتفضل كمّل." }] }], turnComplete: true });
+      } catch { /* session closing */ }
+      armWatchdogRef.current(); // keep watching until audio flows or cap is hit
+    }, AUDIO_WATCHDOG_MS);
+  };
+
   // ── Stop Session ──
 
   const stopSession = useCallback(() => {
@@ -170,6 +199,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     failuresRef.current = 0;
     if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
     if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
+    clearWatchdog();
     processorRef.current?.disconnect();
     processorRef.current = null;
     streamRef.current?.getTracks().forEach(t => t.stop());
@@ -377,6 +407,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               }
 
               if (data.serverContent?.turnComplete) {
+                clearWatchdog(); // turn ended cleanly; retry below re-arms if text-only
                 clearCompletedSources();
                 clientBufRef.current = []; // server consumed our turn → ack
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.turnEnd', {
@@ -417,6 +448,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                     audioChunkCountRef.current++;
                     if (!turnHadAudioRef.current) {
                       turnHadAudioRef.current = true;
+                      clearWatchdog(); // audio is flowing → cancel the nudge timer
                       traceClient.traceEvent(traceSessionIdRef.current, 'ai.audioStart', {
                         metadata: { ctxState: audioContextRef.current?.state ?? 'null', aiMuted: aiMutedRef.current },
                       });
@@ -580,7 +612,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
                     audioChunkCountRef.current++;
-                    turnHadAudioRef.current = true;
+                    if (!turnHadAudioRef.current) { turnHadAudioRef.current = true; clearWatchdog(); }
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
@@ -595,6 +627,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               // Same audio-reliability guard as the primary session: a reconnected
               // session can also return a turn text-only — nudge to recover voice.
               if (data.serverContent?.turnComplete) {
+                clearWatchdog();
                 clearCompletedSources();
                 clientBufRef.current = [];
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.turnEnd', {

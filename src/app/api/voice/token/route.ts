@@ -85,7 +85,10 @@ export async function POST(req: NextRequest) {
           model: VOICE_MODEL,
           config: {
             responseModalities: [Modality.AUDIO],
-            temperature: 0.7,
+            // No explicit temperature: with gemini-3.1-flash-live native audio,
+            // setting it (esp. 0) triggers intermittent no-audio / runaway / 1011.
+            // Omitting it entirely is the community-verified clean config
+            // (googleapis/js-genai#1578).
             systemInstruction: {
               parts: [{ text: systemInstruction }]
             },
