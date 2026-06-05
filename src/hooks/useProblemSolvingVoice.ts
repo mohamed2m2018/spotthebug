@@ -183,9 +183,13 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       // Only nudge on a TRUE freeze — NOTHING came back. If audio OR transcript
       // arrived, the model is responding (maybe just slow); nudging here injects a
       // phantom "continue" that the model answers with "تمام…" as if replying.
-      if (turnHadAudioRef.current || turnHadTranscriptRef.current) return;
+      if (turnHadAudioRef.current || turnHadTranscriptRef.current) {
+        console.log(`[Solve] ⏰ watchdog: not firing (audio=${turnHadAudioRef.current} transcript=${turnHadTranscriptRef.current})`);
+        return;
+      }
       if (voiceRetryCountRef.current >= MAX_VOICE_RETRIES) return; // give up after cap
       voiceRetryCountRef.current++;
+      console.log(`[Solve] ⏰ watchdog: true freeze (no audio/transcript) → nudge #${voiceRetryCountRef.current}`);
       try { traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceWatchdog', { metadata: { attempt: voiceRetryCountRef.current } }); } catch { /* noop */ }
       try {
         sessionRef.current?.sendClientContent({ turns: [{ role: "user", parts: [{ text: "اتفضل كمّل." }] }], turnComplete: true });
@@ -429,12 +433,16 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 // audio instead of resuming the lesson). Retry up to MAX times per
                 // text-only streak — a single retry can itself come back text-only,
                 // which left the session permanently silent before.
+                console.log(`[Solve] 🏁 turnEnd audio=${turnHadAudioRef.current} transcript=${turnHadTranscriptRef.current} chunks=${audioChunkCountRef.current}`);
                 if (turnHadAudioRef.current) {
                   voiceRetryCountRef.current = 0; // audio flowing → reset the streak
                 } else if (turnHadTranscriptRef.current && voiceRetryCountRef.current < MAX_VOICE_RETRIES && !aiMutedRef.current && !endedRef.current) {
                   voiceRetryCountRef.current++;
+                  console.log(`[Solve] 🔁 text-only turn → voiceRetry nudge #${voiceRetryCountRef.current}`);
                   traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry', { metadata: { attempt: voiceRetryCountRef.current } });
                   sendTurn("اتفضل كمّل.");
+                } else if (!turnHadAudioRef.current && turnHadTranscriptRef.current) {
+                  console.log(`[Solve] ⚠️ text-only turn but retry cap reached (${voiceRetryCountRef.current}) — staying silent`);
                 }
                 turnHadAudioRef.current = false;
                 turnHadTranscriptRef.current = false;
@@ -648,10 +656,12 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.turnEnd', {
                   metadata: { audioReceived: turnHadAudioRef.current, audioChunks: audioChunkCountRef.current, phase: 'reconnect' },
                 });
+                console.log(`[Solve] 🏁 turnEnd(reconnect) audio=${turnHadAudioRef.current} transcript=${turnHadTranscriptRef.current} chunks=${audioChunkCountRef.current}`);
                 if (turnHadAudioRef.current) {
                   voiceRetryCountRef.current = 0;
                 } else if (turnHadTranscriptRef.current && voiceRetryCountRef.current < MAX_VOICE_RETRIES && !aiMutedRef.current && !endedRef.current) {
                   voiceRetryCountRef.current++;
+                  console.log(`[Solve] 🔁 text-only turn(reconnect) → voiceRetry nudge #${voiceRetryCountRef.current}`);
                   traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry', { metadata: { attempt: voiceRetryCountRef.current, phase: 'reconnect' } });
                   sendTurn("اتفضل كمّل.");
                 }
