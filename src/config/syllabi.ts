@@ -67,6 +67,27 @@ export const SQL_SYLLABUS: ModeSyllabus = {
   ],
 };
 
+/** SQL interview PROBLEMS — the most-asked query problems (LeetCode SQL 50 /
+ * GeeksforGeeks / FAANG question banks), each phrased against the fixed practice
+ * schema (employees, departments, customers, products, orders) so the learner
+ * actually writes + Runs the query. The coach poses the problem, teaches the
+ * approach, and walks the solution. */
+export const SQL_PROBLEMS: ModeSyllabus = {
+  source: "2026 SQL interview question banks (LeetCode SQL 50, GeeksforGeeks, FAANG lists)",
+  description:
+    "8 high-yield SQL interview problems — one per core pattern, ordered easy→hard, all runnable against the practice database. Built for a 2-day cram: the coach poses each, teaches the pattern AND its common variants (so each problem covers a family), then has you write and Run the query.",
+  syllabus: [
+    "Nth highest salary: return the 2nd- (then Nth-) highest distinct employees.salary. Pattern: ranking via DENSE_RANK vs correlated subquery vs LIMIT/OFFSET, and NULL when none. (LeetCode 176/177)",
+    "Employees earning more than their manager: self-join employees on manager_id. Pattern: self-joins and comparing a row to a related row. (LeetCode 181)",
+    "Department top-N salaries: top-3 paid per department via DENSE_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC). Pattern: top-N-per-group + RANK vs DENSE_RANK vs ROW_NUMBER. (LeetCode 184/185)",
+    "Customers who never ordered: anti-join — LEFT JOIN orders … WHERE orders.id IS NULL, or NOT EXISTS. Pattern: finding missing/unmatched rows. (LeetCode 183)",
+    "Top-selling product by revenue: join orders↔products, GROUP BY, SUM(amount), ORDER BY … LIMIT. Pattern: aggregation + join + ordering; variant: revenue per customer/category with LEFT JOIN + COALESCE.",
+    "Running total & month-over-month growth on orders: SUM() OVER (ORDER BY order_date) and LAG() for the prior period. Pattern: ordered window functions over time.",
+    "Median salary (overall and per department): the classic 'no built-in MEDIAN'. Pattern: percentile/ordering tricks with window functions.",
+    "Duplicate detection & dedup: GROUP BY key HAVING COUNT(*) > 1, then keep one per group with ROW_NUMBER. Pattern: dedup / gaps-and-islands intro.",
+  ],
+};
+
 /** Backend + System Design: concepts taught through problems. */
 export const BACKEND_SYLLABUS: ModeSyllabus = {
   source: "2026 backend/system-design guides (DesignGurus, Hello Interview, MeetAssist)",

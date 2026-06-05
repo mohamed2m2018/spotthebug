@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { DSA_SYLLABUS, MODE_SYLLABI } from "@/config/syllabi";
+import { DSA_SYLLABUS, MODE_SYLLABI, SQL_PROBLEMS } from "@/config/syllabi";
 import { useCovered, resetCoverage } from "@/lib/coverage";
 
 /**
@@ -13,6 +13,7 @@ import { useCovered, resetCoverage } from "@/lib/coverage";
 const TRACKS = [
   { id: "dsa", label: "🧠 Problem Solving (DSA)", items: DSA_SYLLABUS.syllabus },
   { id: "sql", label: "🗄️ SQL & Databases", items: MODE_SYLLABI.sql.syllabus },
+  { id: "sql-problems", label: "📝 SQL Interview Problems", items: SQL_PROBLEMS.syllabus },
   { id: "sysdesign", label: "🏗️ Backend & System Design", items: MODE_SYLLABI.sysdesign.syllabus },
 ];
 

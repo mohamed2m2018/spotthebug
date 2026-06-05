@@ -7,7 +7,7 @@ import HuntSession from "@/components/HuntSession";
 import PairSession from "@/components/PairSession";
 import SolveSession from "@/components/SolveSession";
 import { PREDEFINED_PROBLEMS, PROBLEM_CATEGORIES, getProblemById, type PredefinedProblem } from "@/config/problems";
-import { MODE_SYLLABI, DSA_SYLLABUS, type ModeSyllabus } from "@/config/syllabi";
+import { MODE_SYLLABI, DSA_SYLLABUS, SQL_PROBLEMS, type ModeSyllabus } from "@/config/syllabi";
 import CoverageOverview from "@/components/CoverageOverview";
 import { getCovered } from "@/lib/coverage";
 import { useSavedSessions, removeSession, type SavedSession } from "@/lib/sessionStore";
@@ -137,7 +137,7 @@ export default function SessionPage() {
   // Resume a previously saved session: restore mode, syllabus position, and the
   // saved code/transcript, then jump straight into the active session.
   const resumeSaved = (s: SavedSession) => {
-    const syl = s.trackId === "dsa" ? DSA_SYLLABUS : s.trackId === "sql" ? MODE_SYLLABI.sql : MODE_SYLLABI.sysdesign;
+    const syl = s.trackId === "dsa" ? DSA_SYLLABUS : s.trackId === "sql-problems" ? SQL_PROBLEMS : s.trackId === "sql" ? MODE_SYLLABI.sql : MODE_SYLLABI.sysdesign;
     resetSetup();
     setMode(s.mode);
     setTrackId(s.trackId ?? null);
@@ -227,6 +227,14 @@ export default function SessionPage() {
               <span className={styles.modeIcon}>🗄️</span>
               <span className={styles.modeLabel}>SQL &amp; Databases</span>
               <span className={styles.modeDesc}>Learn queries, design & concepts (joins, windows, indexing, transactions, concurrency) through a curated interview syllabus</span>
+            </button>
+            <button
+              className={styles.modeCard}
+              onClick={() => startCuratedMode("sql", SQL_PROBLEMS, "sql-problems")}
+            >
+              <span className={styles.modeIcon}>📝</span>
+              <span className={styles.modeLabel}>SQL Interview Problems</span>
+              <span className={styles.modeDesc}>8 high-yield, most-asked SQL problems (2nd-highest salary, top-N per group, anti-joins, windows, median, dedup) — each runnable, coach teaches the pattern + variants</span>
             </button>
             <button
               className={styles.modeCard}
