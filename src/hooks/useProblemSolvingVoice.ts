@@ -218,6 +218,10 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           processor.onaudioprocess = (e) => {
             const activeSession = sessionRef.current || liveSession;
             if (!activeSession) return;
+            // Muted → send nothing (don't stream silence, which the server can
+            // still VAD-flag and turn into a spurious interrupt that drops audio).
+            const micTrack = streamRef.current?.getAudioTracks()[0];
+            if (micTrack && !micTrack.enabled) return;
             const inputData = downsampleTo16k(e.inputBuffer.getChannelData(0), nativeSampleRate);
             const pcm16 = float32ToInt16(inputData);
             const base64Audio = arrayBufferToBase64(pcm16.buffer as ArrayBuffer);

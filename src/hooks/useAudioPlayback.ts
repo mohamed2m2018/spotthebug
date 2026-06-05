@@ -65,7 +65,7 @@ export function useAudioPlayback(logPrefix: string = "[Voice]"): UseAudioPlaybac
     // Jitter cushion: when starting fresh or after an underrun (chunks arrived
     // late and the schedule fell back to realtime), schedule slightly in the
     // future so back-to-back chunks play gaplessly instead of clicking/stuttering.
-    const LEAD = 0.15;
+    const LEAD = 0.25;
     if (nextPlayTimeRef.current < currentTime + 0.03) {
       nextPlayTimeRef.current = currentTime + LEAD;
     }
