@@ -294,6 +294,9 @@ export default function SolveSession({
         grounded: false,
       };
       setProblem(problemData);
+      // Mark the syllabus item covered as soon as the learner ENTERS it (not only
+      // on [PROBLEM_SOLVED]) — entering a topic checks it off the tracker.
+      if (trackId) markCovered(trackId, conceptTopic);
       const resuming = !!(resumeState && resumeState.messages?.length);
       setCode(resuming ? (resumeState!.code || starter) : starter);
       setMessages(resuming ? resumeState!.messages : [{ role: "ai", text: "Session started! Let's learn this together." }]);
