@@ -495,11 +495,11 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
              reconnectingRef.current = false;
              scheduleReconnect();
           },
-          onclose: () => {
+          onclose: (e: any) => {
              if (myGen !== sessionGenRef.current) return; // stale connection (e.g. old session after a goAway reconnect)
-             console.log("[Solve] SDK Session closed (server-initiated)");
+             console.log(`[Solve] SDK Session closed (server-initiated) code=${e?.code} reason=${e?.reason || ''}`);
              if (endedRef.current) return; // intentional stop — don't reconnect
-             try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.close'); } catch { /* noop */ }
+             try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.close', { metadata: { code: e?.code, reason: String(e?.reason || '').slice(0, 120) } }); } catch { /* noop */ }
              reconnectingRef.current = false;
              scheduleReconnect();
           }
@@ -522,7 +522,9 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const scheduleReconnect = () => {
     if (endedRef.current || reconnectingRef.current || reconnectTimerRef.current) return;
     const f = failuresRef.current;
-    const delay = f === 0 ? 0 : Math.min(15000, 800 * Math.pow(2, Math.min(f, 5))); // exp backoff, capped 15s
+    // Exp backoff capped at 30s. Sustained closes (e.g. 1011 rate-limit) must NOT
+    // be hammered — backing off lets the limit clear so a session can finally stick.
+    const delay = f === 0 ? 0 : Math.min(30000, 800 * Math.pow(2, Math.min(f, 6)));
     reconnectTimerRef.current = setTimeout(() => {
       reconnectTimerRef.current = null;
       attemptReconnect();
@@ -556,18 +558,19 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     const onDrop = () => {
       if (myGen !== sessionGenRef.current) return; // stale
       reconnectingRef.current = false;
+      // A session that died can't be allowed to later reset the failure counter,
+      // or backoff never grows and we hammer a rate-limited endpoint.
+      if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
       if (endedRef.current) return;
       const opened = connOpenedAtRef.current > 0;
       const elapsed = opened ? performance.now() - connOpenedAtRef.current : 0;
       // A resume that never opened, or died within 10s of opening, means the
-      // handle is terminal (server permanently ended that session). Drop it and
-      // retry IMMEDIATELY as a fresh session — don't burn 3 backoff cycles
-      // re-trying the same dead handle. History replay restores context.
+      // handle is terminal — drop it so the next attempt is FRESH (history replay
+      // restores context). Still back off: instant retries trip rate-limiting and
+      // the server then closes even fresh sessions in ~1-2s (a self-feeding storm).
       if (handle && (!opened || elapsed < 10000)) {
-        console.warn("[Solve] resume handle terminal — dropping, retry fresh");
+        console.warn("[Solve] resume handle terminal — dropping, next attempt fresh");
         resumptionHandleRef.current = undefined;
-        scheduleReconnect(); // failures unchanged → near-instant fresh retry
-        return;
       }
       failuresRef.current++;
       scheduleReconnect();
@@ -653,9 +656,10 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             console.error("[Solve] SDK Error (reconnect):", err);
             onDrop();
           },
-          onclose: () => {
+          onclose: (e: any) => {
             if (myGen !== sessionGenRef.current) return;
-            console.log('[Solve] SDK Session closed (reconnect)');
+            console.log(`[Solve] SDK Session closed (reconnect) code=${e?.code} reason=${e?.reason || ''}`);
+            try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.close', { metadata: { code: e?.code, reason: String(e?.reason || '').slice(0, 120), phase: 'reconnect' } }); } catch { /* noop */ }
             onDrop();
           },
         },
@@ -669,20 +673,27 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           try { newSession.sendClientContent({ turns: [{ role: "user", parts: [{ text: t }] }], turnComplete: true }); } catch { /* noop */ }
         }
       } else {
-        // FRESH session lost all context — replay recent conversation history +
-        // current code as turns, then a small "continue" trigger so the coach
-        // picks up seamlessly (and the trigger turn is small → reliable audio).
+        // FRESH session lost all context — replay recent history + current code so
+        // the coach continues seamlessly. CRITICAL: client content with
+        // role:"model" is rejected by the Live API (close 1007 "invalid argument")
+        // — which silently killed every fresh reconnect and caused a reconnect
+        // storm. So fold the transcript into ONE role:"user" context turn (labelled
+        // lines) instead of alternating user/model turns.
         try {
           const ctx = optionsRef.current.getResumeContext?.();
-          const hist = (ctx?.messages || []).slice(-10).map((m) => ({
-            role: m.role === "ai" ? "model" : "user",
-            parts: [{ text: m.text.replace(/\[[A-Z_]+\]/g, "").trim() }],
-          })).filter((t) => t.parts[0].text);
-          if (hist.length) newSession.sendClientContent({ turns: hist, turnComplete: false });
+          const histLines = (ctx?.messages || []).slice(-6)
+            .map((m) => {
+              const text = m.text.replace(/\[[A-Z_]+\]/g, "").trim().slice(0, 220);
+              return text ? `${m.role === "ai" ? "المدرّس" : "أنا"}: ${text}` : "";
+            })
+            .filter(Boolean)
+            .join("\n")
+            .slice(-1200); // keep the recap turn small enough to reliably get audio
           const code = ctx?.code?.trim() ? ctx.code.slice(0, 1500) : "";
           const codeNote = code ? `الكود الحالي عندي:\n\`\`\`\n${code}\n\`\`\`\n` : "";
+          const recap = histLines ? `سياق المحادثة قبل قطع الاتصال:\n${histLines}\n\n` : "";
           newSession.sendClientContent({
-            turns: [{ role: "user", parts: [{ text: `${codeNote}اتفضل كمّل من اللي وقفنا عنده، من غير ما تبدأ من الأول.` }] }],
+            turns: [{ role: "user", parts: [{ text: `${recap}${codeNote}اتفضل كمّل من اللي وقفنا عنده، من غير ما تبدأ من الأول.` }] }],
             turnComplete: true,
           });
         } catch { /* noop */ }
