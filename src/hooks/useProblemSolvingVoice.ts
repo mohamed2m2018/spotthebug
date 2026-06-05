@@ -82,6 +82,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const failuresRef = useRef(0); // consecutive reconnect failures → backoff + handle fallback
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const connOpenedAtRef = useRef(0); // performance.now() when the current connection opened (0 = not yet)
+  const lastCloseCodeRef = useRef(0); // WS close code of the connection that just dropped (1007 = invalid arg → resume is hopeless, go fresh)
   const turnHadAudioRef = useRef(false); // did the current turn deliver audio?
   const turnHadTranscriptRef = useRef(false); // did the current turn deliver transcript?
   const audioChunkCountRef = useRef(0); // diag: audio chunks received this turn
@@ -367,6 +368,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             if (myGen !== sessionGenRef.current) return; // stale connection
             console.log("[Solve] ✅ SDK Session opened — starting mic");
             connOpenedAtRef.current = performance.now();
+            lastCloseCodeRef.current = 0;
             // The dev StrictMode mount/unmount cycle can leave endedRef=true via
             // the cleanup's stopSession; the live session is genuinely open here,
             // so clear it — otherwise every reconnect is silently blocked.
@@ -498,6 +500,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           onclose: (e: any) => {
              if (myGen !== sessionGenRef.current) return; // stale connection (e.g. old session after a goAway reconnect)
              console.log(`[Solve] SDK Session closed (server-initiated) code=${e?.code} reason=${e?.reason || ''}`);
+             lastCloseCodeRef.current = e?.code ?? 0;
              if (endedRef.current) return; // intentional stop — don't reconnect
              try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.close', { metadata: { code: e?.code, reason: String(e?.reason || '').slice(0, 120) } }); } catch { /* noop */ }
              reconnectingRef.current = false;
@@ -538,8 +541,13 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
 
     // After repeated failures the resumption handle may be terminal — fall back
-    // to a FRESH session (no handle) so we always recover.
-    const handle = (resumptionHandleRef.current && failuresRef.current < 3) ? resumptionHandleRef.current : undefined;
+    // to a FRESH session (no handle) so we always recover. Also: a 1007 close
+    // ("invalid argument", a server-side native-audio glitch) makes the session
+    // unresumable — resuming it just 1007s again — so skip straight to fresh.
+    const closedBad1007 = lastCloseCodeRef.current === 1007;
+    const handle = (resumptionHandleRef.current && failuresRef.current < 3 && !closedBad1007)
+      ? resumptionHandleRef.current : undefined;
+    if (closedBad1007) resumptionHandleRef.current = undefined;
     console.log(`[Solve] 🔄 Reconnecting (failures=${failuresRef.current}, ${handle ? 'resume' : 'fresh'})`);
     traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnect', { metadata: { failures: failuresRef.current, kind: handle ? 'resume' : 'fresh' } });
     setIsReconnecting(true);
@@ -595,6 +603,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             if (myGen !== sessionGenRef.current) return;
             console.log('[Solve] ✅ Reconnected');
             connOpenedAtRef.current = performance.now();
+            lastCloseCodeRef.current = 0;
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { kind: handle ? 'resume' : 'fresh' } });
             reconnectingRef.current = false;
             setIsReconnecting(false);
@@ -659,6 +668,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           onclose: (e: any) => {
             if (myGen !== sessionGenRef.current) return;
             console.log(`[Solve] SDK Session closed (reconnect) code=${e?.code} reason=${e?.reason || ''}`);
+            lastCloseCodeRef.current = e?.code ?? 0;
             try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.close', { metadata: { code: e?.code, reason: String(e?.reason || '').slice(0, 120), phase: 'reconnect' } }); } catch { /* noop */ }
             onDrop();
           },
