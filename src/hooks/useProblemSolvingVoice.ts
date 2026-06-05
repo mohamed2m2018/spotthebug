@@ -134,7 +134,10 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   }, [sendTurn]);
 
   const sendCodeUpdate = useCallback((code: string) => {
-    sendText(`[CODE_UPDATE] The developer edited their solution:\n\`\`\`\n${code}\n\`\`\``);
+    // Cap the code so a big editor can't make this turn large enough to trigger
+    // the model's text-only (no-audio) response.
+    const c = code.length > 1500 ? code.slice(0, 1500) + "\n… (truncated)" : code;
+    sendText(`[CODE_UPDATE] Current code:\n\`\`\`\n${c}\n\`\`\``);
   }, [sendText]);
 
   // ── Stop Session ──
