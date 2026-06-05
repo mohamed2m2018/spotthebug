@@ -386,9 +386,12 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 if (turnHadAudioRef.current) {
                   voiceRetriedRef.current = false;
                 } else if (turnHadTranscriptRef.current && !voiceRetriedRef.current && !aiMutedRef.current && !endedRef.current) {
+                  // The turn came back text-only. Nudge with a NEUTRAL "continue"
+                  // (no mention of voice/audio, or the coach starts talking ABOUT
+                  // the audio instead of just continuing the lesson).
                   voiceRetriedRef.current = true;
                   traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry');
-                  sendTurn("من فضلك قول نفس الكلام ده بصوت (صوت مسموع)، مش نص.");
+                  sendTurn("اتفضل كمّل.");
                 }
                 turnHadAudioRef.current = false;
                 turnHadTranscriptRef.current = false;
