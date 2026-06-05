@@ -75,16 +75,18 @@ export const SQL_SYLLABUS: ModeSyllabus = {
 export const SQL_PROBLEMS: ModeSyllabus = {
   source: "2026 SQL interview question banks (LeetCode SQL 50, GeeksforGeeks, FAANG lists)",
   description:
-    "8 high-yield SQL interview problems — one per core pattern, ordered easy→hard, all runnable against the practice database. Built for a 2-day cram: the coach poses each, teaches the pattern AND its common variants (so each problem covers a family), then has you write and Run the query.",
+    "10 high-yield SQL interview problems — one per core pattern, ordered easy→hard, all runnable against the practice database. Built for a 2-day cram: the coach poses each, teaches the pattern AND its common variants (so each problem covers a family), then has you write and Run the query.",
   syllabus: [
     "Nth highest salary: return the 2nd- (then Nth-) highest distinct employees.salary. Pattern: ranking via DENSE_RANK vs correlated subquery vs LIMIT/OFFSET, and NULL when none. (LeetCode 176/177)",
     "Employees earning more than their manager: self-join employees on manager_id. Pattern: self-joins and comparing a row to a related row. (LeetCode 181)",
     "Department top-N salaries: top-3 paid per department via DENSE_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC). Pattern: top-N-per-group + RANK vs DENSE_RANK vs ROW_NUMBER. (LeetCode 184/185)",
     "Customers who never ordered: anti-join — LEFT JOIN orders … WHERE orders.id IS NULL, or NOT EXISTS. Pattern: finding missing/unmatched rows. (LeetCode 183)",
     "Top-selling product by revenue: join orders↔products, GROUP BY, SUM(amount), ORDER BY … LIMIT. Pattern: aggregation + join + ordering; variant: revenue per customer/category with LEFT JOIN + COALESCE.",
+    "Conditional aggregation / pivot: one row per product category with revenue split into columns by customer country — SUM(CASE WHEN customers.country = 'USA' THEN orders.amount END) etc. Pattern: turning rows into columns; also % of total via a window SUM.",
     "Running total & month-over-month growth on orders: SUM() OVER (ORDER BY order_date) and LAG() for the prior period. Pattern: ordered window functions over time.",
+    "Consecutive sequences & gaps (gaps-and-islands): find gaps in the orders.id sequence (ids with no successor), and runs of consecutive ids, using the ROW_NUMBER() − id trick. Pattern: streak/consecutive detection (e.g. N consecutive logins, longest streak).",
     "Median salary (overall and per department): the classic 'no built-in MEDIAN'. Pattern: percentile/ordering tricks with window functions.",
-    "Duplicate detection & dedup: GROUP BY key HAVING COUNT(*) > 1, then keep one per group with ROW_NUMBER. Pattern: dedup / gaps-and-islands intro.",
+    "Duplicate detection & dedup: GROUP BY key HAVING COUNT(*) > 1, then keep one per group with ROW_NUMBER. Pattern: dedup.",
   ],
 };
 

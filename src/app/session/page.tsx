@@ -234,7 +234,7 @@ export default function SessionPage() {
             >
               <span className={styles.modeIcon}>📝</span>
               <span className={styles.modeLabel}>SQL Interview Problems</span>
-              <span className={styles.modeDesc}>8 high-yield, most-asked SQL problems (2nd-highest salary, top-N per group, anti-joins, windows, median, dedup) — each runnable, coach teaches the pattern + variants</span>
+              <span className={styles.modeDesc}>10 high-yield, most-asked SQL problems (2nd-highest salary, top-N per group, anti-joins, pivot, windows, gaps-and-islands, median, dedup) — each runnable, coach teaches the pattern + variants</span>
             </button>
             <button
               className={styles.modeCard}
