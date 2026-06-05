@@ -309,7 +309,9 @@ export default function SolveSession({
       const continuingNote = "This is a CONTINUING session — the developer already began this topic, so pick up where you left off and do NOT repeat the introduction.";
       const problemContext = mode === "sql"
         ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer a query to write and Run against this database.`
-        : `Topic to teach: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer something to try.`;
+        : mode === "sysdesign"
+        ? `Topic to teach: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer a design to sketch.`
+        : `Problem to solve: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Pose this exact problem to the developer (state input, expected output, a tiny example), have them write the solution in the editor, and coach them through solving it while teaching the pattern, following the learner profile.`;
       try {
         await startSession(problemContext);
         setStarted(true);

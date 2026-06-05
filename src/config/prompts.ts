@@ -349,11 +349,11 @@ DELIVERY — CRITICAL:
 
 /** Prompt sent as the first user message when a Solve session starts. */
 export function buildSolveIntroPrompt(problemContext: string): string {
-  return `Start a learning session on this problem/pattern:
+  return `Start a problem-solving session on this LeetCode-style problem:
 
 ${problemContext}
 
-Greet in one short Arabic sentence naming the topic, then begin teaching it in Arabic, following your teaching method (mental-model-first, one small idea per turn, Socratic when stuck). Speak Arabic throughout.`;
+Greet in ONE short Arabic sentence naming the problem, then immediately POSE THE ACTUAL PROBLEM in Arabic: state the input, what to return, and a tiny concrete example (e.g. for Two Sum: nums=[2,7,11,15], target=9 → [0,1]). Ask the developer to write their solution in the code editor. Then coach them through SOLVING IT — mental-model first, one small step per turn, Socratic hints when stuck, and teach the underlying pattern + time/space complexity as they work. Do NOT just lecture the concept in the abstract — anchor everything on solving THIS specific problem in the editor. Speak Arabic throughout.`;
 }
 
 // ═══════════════════════════════════════════════════════
