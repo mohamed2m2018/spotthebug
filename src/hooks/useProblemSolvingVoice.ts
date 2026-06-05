@@ -76,6 +76,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   // Each live connection gets a generation id; callbacks from a stale connection
   // (e.g. the old session closing after a proactive goAway reconnect) are ignored.
   const sessionGenRef = useRef(0);
+  const turnHadAudioRef = useRef(false); // diag: did the current turn deliver audio?
+  const audioChunkCountRef = useRef(0); // diag: audio chunks received this turn
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -189,6 +191,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     const next = !aiMutedRef.current;
     aiMutedRef.current = next;
     setIsAiMuted(next);
+    try { traceClient.traceEvent(traceSessionIdRef.current, next ? 'ai.audioPaused' : 'ai.audioResumed'); } catch { /* noop */ }
     if (next) {
       flushAudioQueue();
       console.log("[Solve] ⏸️ AI audio paused");
@@ -232,8 +235,11 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
           });
           streamRef.current = stream;
-          setIsRecording(true);
-          console.log('[Solve] 🎤 Mic stream acquired');
+          // Muted by default — the developer unmutes to speak.
+          stream.getAudioTracks().forEach(t => { t.enabled = false; });
+          setIsRecording(false);
+          console.log('[Solve] 🎤 Mic acquired (muted by default)');
+          traceClient.traceEvent(traceSessionIdRef.current, 'mic.acquired', { metadata: { mutedByDefault: true } });
 
           const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
           audioContextRef.current = ctx;
@@ -267,9 +273,11 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             : SOLVE_INTRO_FALLBACK;
 
           console.log('[Solve] 📝 Sending intro context to session');
+          traceClient.traceEvent(traceSessionIdRef.current, 'session.introSent', { metadata: { len: introText.length } });
           sendTurn(introText, liveSession);
         } catch (micError) {
           console.error("[Solve] Microphone error:", micError);
+          try { traceClient.traceEvent(traceSessionIdRef.current, 'mic.error', { metadata: { msg: String((micError as any)?.message || micError).slice(0, 200) } }); } catch { /* noop */ }
           stopSession();
         }
       };
@@ -335,9 +343,24 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                  return;
               }
 
+              if (data.serverContent?.generationComplete) {
+                traceClient.traceEvent(traceSessionIdRef.current, 'ai.generationComplete');
+              }
+
               if (data.serverContent?.turnComplete) {
                 clearCompletedSources();
                 clientBufRef.current = []; // server consumed our turn → ack
+                // DIAG: report whether this whole turn delivered any audio.
+                traceClient.traceEvent(traceSessionIdRef.current, 'ai.turnEnd', {
+                  metadata: {
+                    audioReceived: turnHadAudioRef.current,
+                    audioChunks: audioChunkCountRef.current,
+                    ctxState: audioContextRef.current?.state ?? 'null',
+                    aiMuted: aiMutedRef.current,
+                  },
+                });
+                turnHadAudioRef.current = false;
+                audioChunkCountRef.current = 0;
               }
 
               if (data.serverContent?.interrupted) {
@@ -349,7 +372,17 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
+                    audioChunkCountRef.current++;
+                    if (!turnHadAudioRef.current) {
+                      turnHadAudioRef.current = true;
+                      traceClient.traceEvent(traceSessionIdRef.current, 'ai.audioStart', {
+                        metadata: { ctxState: audioContextRef.current?.state ?? 'null', aiMuted: aiMutedRef.current },
+                      });
+                    }
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
+                  } else if (part.text) {
+                    // DIAG: model emitted TEXT in modelTurn (not audio) — record it.
+                    traceClient.traceEvent(traceSessionIdRef.current, 'ai.modelText', { metadata: { len: part.text.length } });
                   }
                 }
               }
@@ -358,12 +391,19 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.serverContent?.outputTranscription?.text) {
                 const text = data.serverContent.outputTranscription.text;
                 fullTranscriptRef.current += `\nCoach: ${text}`;
-                traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
+                traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { metadata: { len: text.length } });
                 optionsRef.current.onTranscript?.({ role: "ai", text });
                 if (text.includes("[PROBLEM_SOLVED]")) {
                   traceClient.traceEvent(traceSessionIdRef.current, 'solve.problem.solved');
                   optionsRef.current.onProblemSolved?.();
                 }
+              }
+
+              // DIAG: any serverContent shape we didn't handle above.
+              if (data.serverContent && !data.serverContent.modelTurn && !data.serverContent.outputTranscription
+                  && !data.serverContent.turnComplete && !data.serverContent.generationComplete
+                  && !data.serverContent.interrupted) {
+                traceClient.traceEvent(traceSessionIdRef.current, 'ai.otherMsg', { metadata: { keys: Object.keys(data.serverContent) } });
               }
 
             } catch (e) {
@@ -373,6 +413,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           onerror: (err) => {
              if (myGen !== sessionGenRef.current) return; // stale connection
              console.error("[Solve] SDK Error:", err);
+             try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.error', { metadata: { msg: String((err as any)?.message || err).slice(0, 200) } }); } catch { /* noop */ }
              if (endedRef.current) { stopSession(); return; }
              // The connection-limit drop often surfaces as an error, not a clean
              // close — try to resume rather than killing the session.

@@ -132,6 +132,8 @@ export async function POST(req: NextRequest) {
     let needsFlush = false;
     for (const action of actions) {
       if (!action.sessionId || !action.action) continue;
+      // [DIAG] echo the live event stream to the server log for debugging.
+      console.log(`[VDIAG] ${action.action}${action.name ? " " + action.name : ""}${action.metadata ? " " + JSON.stringify(action.metadata) : ""}`);
       processAction(langfuse, action);
       if (action.action === "endTrace") needsFlush = true;
     }
