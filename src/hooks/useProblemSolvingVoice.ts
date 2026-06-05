@@ -81,10 +81,12 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const sessionGenRef = useRef(0);
   const failuresRef = useRef(0); // consecutive reconnect failures → backoff + handle fallback
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const connOpenedAtRef = useRef(0); // performance.now() when the current connection opened (0 = not yet)
   const turnHadAudioRef = useRef(false); // did the current turn deliver audio?
   const turnHadTranscriptRef = useRef(false); // did the current turn deliver transcript?
   const audioChunkCountRef = useRef(0); // diag: audio chunks received this turn
-  const voiceRetriedRef = useRef(false); // retried-for-voice once on a text-only turn?
+  const voiceRetryCountRef = useRef(0); // consecutive nudges on a text-only streak (capped)
+  const MAX_VOICE_RETRIES = 3;
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -235,7 +237,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     reconnectingRef.current = false;
     reconnectCountRef.current = 0;
     clientBufRef.current = [];
-    voiceRetriedRef.current = false;
+    voiceRetryCountRef.current = 0;
     turnHadTranscriptRef.current = false;
     fullTranscriptRef.current = "";
 
@@ -334,6 +336,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           onopen: async () => {
             if (myGen !== sessionGenRef.current) return; // stale connection
             console.log("[Solve] ✅ SDK Session opened — starting mic");
+            connOpenedAtRef.current = performance.now();
             // The dev StrictMode mount/unmount cycle can leave endedRef=true via
             // the cleanup's stopSession; the live session is genuinely open here,
             // so clear it — otherwise every reconnect is silently blocked.
@@ -384,16 +387,17 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                     aiMuted: aiMutedRef.current,
                   },
                 });
-                // Voice-reliability: gemini-3.1 sometimes returns a turn text-only
-                // (transcript, no audio). If so, nudge it ONCE to say it in voice.
+                // Voice-reliability: gemini-3.1 intermittently returns a turn
+                // text-only (transcript, no audio). Nudge with a NEUTRAL "continue"
+                // (no mention of voice/audio, else the coach narrates ABOUT the
+                // audio instead of resuming the lesson). Retry up to MAX times per
+                // text-only streak — a single retry can itself come back text-only,
+                // which left the session permanently silent before.
                 if (turnHadAudioRef.current) {
-                  voiceRetriedRef.current = false;
-                } else if (turnHadTranscriptRef.current && !voiceRetriedRef.current && !aiMutedRef.current && !endedRef.current) {
-                  // The turn came back text-only. Nudge with a NEUTRAL "continue"
-                  // (no mention of voice/audio, or the coach starts talking ABOUT
-                  // the audio instead of just continuing the lesson).
-                  voiceRetriedRef.current = true;
-                  traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry');
+                  voiceRetryCountRef.current = 0; // audio flowing → reset the streak
+                } else if (turnHadTranscriptRef.current && voiceRetryCountRef.current < MAX_VOICE_RETRIES && !aiMutedRef.current && !endedRef.current) {
+                  voiceRetryCountRef.current++;
+                  traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry', { metadata: { attempt: voiceRetryCountRef.current } });
                   sendTurn("اتفضل كمّل.");
                 }
                 turnHadAudioRef.current = false;
@@ -506,13 +510,33 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnect', { metadata: { failures: failuresRef.current, kind: handle ? 'resume' : 'fresh' } });
     setIsReconnecting(true);
     optionsRef.current.onReconnecting?.();
-    sessionRef.current = null;
 
+    // Close the OLD session before opening a new one. Otherwise (e.g. proactive
+    // goAway reconnect) its socket lingers and the server kills the new resume as
+    // a duplicate. Bump the gen FIRST so the old session's onclose is stale (no
+    // double reconnect).
+    const oldSession = sessionRef.current;
+    sessionRef.current = null;
     const myGen = ++sessionGenRef.current;
+    try { oldSession?.close?.(); } catch { /* already closed */ }
+    connOpenedAtRef.current = 0;
+
     const onDrop = () => {
       if (myGen !== sessionGenRef.current) return; // stale
       reconnectingRef.current = false;
       if (endedRef.current) return;
+      const opened = connOpenedAtRef.current > 0;
+      const elapsed = opened ? performance.now() - connOpenedAtRef.current : 0;
+      // A resume that never opened, or died within 10s of opening, means the
+      // handle is terminal (server permanently ended that session). Drop it and
+      // retry IMMEDIATELY as a fresh session — don't burn 3 backoff cycles
+      // re-trying the same dead handle. History replay restores context.
+      if (handle && (!opened || elapsed < 10000)) {
+        console.warn("[Solve] resume handle terminal — dropping, retry fresh");
+        resumptionHandleRef.current = undefined;
+        scheduleReconnect(); // failures unchanged → near-instant fresh retry
+        return;
+      }
       failuresRef.current++;
       scheduleReconnect();
     };
@@ -535,6 +559,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           onopen: () => {
             if (myGen !== sessionGenRef.current) return;
             console.log('[Solve] ✅ Reconnected');
+            connOpenedAtRef.current = performance.now();
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { kind: handle ? 'resume' : 'fresh' } });
             reconnectingRef.current = false;
             setIsReconnecting(false);
@@ -550,20 +575,41 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.sessionResumptionUpdate?.newHandle) resumptionHandleRef.current = data.sessionResumptionUpdate.newHandle;
               if (data.goAway) { console.warn(`[Solve] ⚠️ GoAway timeLeft ${data.goAway.timeLeft}`); if (!endedRef.current) attemptReconnect(); }
               if (data.serverContent?.error) return;
-              if (data.serverContent?.turnComplete) { clearCompletedSources(); clientBufRef.current = []; }
               if (data.serverContent?.interrupted) flushAudioQueue();
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
+                    audioChunkCountRef.current++;
+                    turnHadAudioRef.current = true;
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
               }
               if (data.serverContent?.outputTranscription?.text) {
                 const text = data.serverContent.outputTranscription.text;
+                turnHadTranscriptRef.current = true;
                 fullTranscriptRef.current += `\nCoach: ${text}`;
                 optionsRef.current.onTranscript?.({ role: "ai", text });
                 if (text.includes("[PROBLEM_SOLVED]")) optionsRef.current.onProblemSolved?.();
+              }
+              // Same audio-reliability guard as the primary session: a reconnected
+              // session can also return a turn text-only — nudge to recover voice.
+              if (data.serverContent?.turnComplete) {
+                clearCompletedSources();
+                clientBufRef.current = [];
+                traceClient.traceEvent(traceSessionIdRef.current, 'ai.turnEnd', {
+                  metadata: { audioReceived: turnHadAudioRef.current, audioChunks: audioChunkCountRef.current, phase: 'reconnect' },
+                });
+                if (turnHadAudioRef.current) {
+                  voiceRetryCountRef.current = 0;
+                } else if (turnHadTranscriptRef.current && voiceRetryCountRef.current < MAX_VOICE_RETRIES && !aiMutedRef.current && !endedRef.current) {
+                  voiceRetryCountRef.current++;
+                  traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry', { metadata: { attempt: voiceRetryCountRef.current, phase: 'reconnect' } });
+                  sendTurn("اتفضل كمّل.");
+                }
+                turnHadAudioRef.current = false;
+                turnHadTranscriptRef.current = false;
+                audioChunkCountRef.current = 0;
               }
             } catch (e) {
               console.error("[Solve] Failed to parse SDK message (reconnect)", e);
