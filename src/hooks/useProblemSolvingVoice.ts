@@ -272,6 +272,11 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
         callbacks: {
           onopen: async () => {
             console.log("[Solve] ✅ SDK Session opened — starting mic");
+            // The dev StrictMode mount/unmount cycle can leave endedRef=true via
+            // the cleanup's stopSession; the live session is genuinely open here,
+            // so clear it — otherwise every reconnect is silently blocked.
+            endedRef.current = false;
+            reconnectingRef.current = false;
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.open');
             setIsConnected(true);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.setupComplete');
@@ -287,12 +292,13 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 resumptionHandleRef.current = data.sessionResumptionUpdate.newHandle;
               }
 
-              // GoAway warning
+              // GoAway → server will close soon (connection limit). Reconnect
+              // PROACTIVELY now (with the resumption handle) for a seamless handoff
+              // instead of waiting for the drop.
               if (data.goAway) {
-                console.warn(`[Solve] ⚠️ GoAway received — timeLeft: ${data.goAway.timeLeft}`);
-                traceClient.traceEvent(traceSessionIdRef.current, 'ws.goAway', {
-                  metadata: { timeLeft: data.goAway.timeLeft },
-                });
+                console.warn(`[Solve] ⚠️ GoAway — timeLeft: ${data.goAway.timeLeft} — reconnecting proactively`);
+                try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.goAway', { metadata: { timeLeft: data.goAway.timeLeft } }); } catch { /* noop */ }
+                if (!endedRef.current) attemptReconnect();
               }
 
               if (data.serverContent?.error) {
@@ -343,8 +349,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           },
           onclose: () => {
              console.log("[Solve] SDK Session closed (server-initiated)");
-             traceClient.traceEvent(traceSessionIdRef.current, 'ws.close');
              if (endedRef.current) return; // intentional stop — don't reconnect
+             try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.close'); } catch { /* noop */ }
              attemptReconnect();
           }
         }
@@ -364,8 +370,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   // ── Auto-Reconnect ──
 
   const attemptReconnect = async () => {
-    if (endedRef.current) return; // session was intentionally stopped
-    if (reconnectingRef.current) return; // already reconnecting (onerror + onclose race)
+    if (endedRef.current) { console.log("[Solve] reconnect skipped — session ended"); return; }
+    if (reconnectingRef.current) { console.log("[Solve] reconnect skipped — already reconnecting"); return; }
     reconnectingRef.current = true;
     if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     reconnectCountRef.current++;
@@ -434,7 +440,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 resumptionHandleRef.current = data.sessionResumptionUpdate.newHandle;
               }
               if (data.goAway) {
-                console.warn(`[Solve] ⚠️ GoAway received — timeLeft: ${data.goAway.timeLeft}`);
+                console.warn(`[Solve] ⚠️ GoAway — timeLeft: ${data.goAway.timeLeft} — reconnecting proactively`);
+                if (!endedRef.current) attemptReconnect();
               }
               if (data.serverContent?.error) return;
               if (data.serverContent?.turnComplete) clearCompletedSources();
