@@ -130,29 +130,19 @@ export default function SolveSession({
   const isSyllabusComplete = syllabus && syllabusIndex >= syllabus.length - 1;
 
   const handleSolved = useCallback(() => {
+    // Solving does NOT disrupt the session — it just keeps going. We only mark
+    // the concept covered + show a brief banner. (Previously this restarted the
+    // session for the next topic, which closed the socket → reconnect loop →
+    // offline.) The learner picks the next topic when ready.
     setSolvedCount(prev => prev + 1);
     setShowSolvedBanner(true);
-    journalCurrent(); // save this topic's transcript before advancing
-    // Persist this concept as covered (visible in the progress tracker).
+    journalCurrent();
     if (trackId && syllabus && syllabus[syllabusIndex]) {
       markCovered(trackId, syllabus[syllabusIndex]);
     }
-    // Auto-advance syllabus after a short delay
-    if (syllabus && onAdvanceSyllabus) {
-      setTimeout(() => {
-        setShowSolvedBanner(false);
-        if (isSyllabusComplete) {
-          handleEnd();
-        } else {
-          onAdvanceSyllabus();
-          // Restart session with next topic
-          mountedRef.current = false;
-          startSolveSession();
-        }
-      }, 3000);
-    }
+    setTimeout(() => setShowSolvedBanner(false), 4000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syllabus, syllabusIndex, isSyllabusComplete, onAdvanceSyllabus, trackId]);
+  }, [syllabus, syllabusIndex, trackId]);
 
   const {
     isConnected, isRecording, isSpeaking, isAiMuted,
