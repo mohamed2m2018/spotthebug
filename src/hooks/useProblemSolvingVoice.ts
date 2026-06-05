@@ -76,6 +76,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   // Each live connection gets a generation id; callbacks from a stale connection
   // (e.g. the old session closing after a proactive goAway reconnect) are ignored.
   const sessionGenRef = useRef(0);
+  const failuresRef = useRef(0); // consecutive reconnect failures → backoff + handle fallback
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const turnHadAudioRef = useRef(false); // diag: did the current turn deliver audio?
   const audioChunkCountRef = useRef(0); // diag: audio chunks received this turn
 
@@ -112,6 +114,18 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     return () => window.removeEventListener("pagehide", stop);
   }, [flushAudioQueue, audioContextRef]);
 
+  // Reconnect the instant the network comes back (after an offline gap).
+  useEffect(() => {
+    const onOnline = () => {
+      if (endedRef.current || sessionRef.current || !traceSessionIdRef.current) return;
+      failuresRef.current = 0;
+      scheduleReconnect();
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Text / Code Sending ──
 
   // Buffer of client turns not yet acknowledged by the server (cleared on the
@@ -146,6 +160,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     endedRef.current = true; // must be set before close() so onclose skips reconnect
     reconnectingRef.current = false;
     sessionGenRef.current++; // invalidate any in-flight session callbacks
+    failuresRef.current = 0;
+    if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
     if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     processorRef.current?.disconnect();
     processorRef.current = null;
@@ -420,14 +436,16 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
              if (endedRef.current) { stopSession(); return; }
              // The connection-limit drop often surfaces as an error, not a clean
              // close — try to resume rather than killing the session.
-             attemptReconnect();
+             reconnectingRef.current = false;
+             scheduleReconnect();
           },
           onclose: () => {
              if (myGen !== sessionGenRef.current) return; // stale connection (e.g. old session after a goAway reconnect)
              console.log("[Solve] SDK Session closed (server-initiated)");
              if (endedRef.current) return; // intentional stop — don't reconnect
              try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.close'); } catch { /* noop */ }
-             attemptReconnect();
+             reconnectingRef.current = false;
+             scheduleReconnect();
           }
         }
       });
@@ -443,85 +461,78 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     }
   };
 
-  // ── Auto-Reconnect ──
+  // ── Auto-Reconnect — never give up while there's a session + internet ──
+
+  const scheduleReconnect = () => {
+    if (endedRef.current || reconnectingRef.current || reconnectTimerRef.current) return;
+    const f = failuresRef.current;
+    const delay = f === 0 ? 0 : Math.min(15000, 800 * Math.pow(2, Math.min(f, 5))); // exp backoff, capped 15s
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      attemptReconnect();
+    }, delay);
+  };
 
   const attemptReconnect = async () => {
-    if (endedRef.current) { console.log("[Solve] reconnect skipped — session ended"); return; }
-    if (reconnectingRef.current) { console.log("[Solve] reconnect skipped — already reconnecting"); return; }
+    if (endedRef.current || reconnectingRef.current) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return; // offline → wait for 'online'
     reconnectingRef.current = true;
     if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
-    reconnectCountRef.current++;
-    const attempt = reconnectCountRef.current;
 
-    if (attempt > MAX_RECONNECTS) {
-      console.warn(`[Solve] Max reconnect attempts (${MAX_RECONNECTS}) reached — ending session`);
-      stopSession();
-      return;
-    }
-
-    const handle = resumptionHandleRef.current;
-    if (!handle) {
-      console.warn('[Solve] No resumption handle available — cannot reconnect');
-      stopSession();
-      return;
-    }
-
-    console.log(`[Solve] 🔄 Reconnecting (attempt ${attempt}/${MAX_RECONNECTS}) with handle: ${handle.slice(0, 20)}...`);
+    // After repeated failures the resumption handle may be terminal — fall back
+    // to a FRESH session (no handle) so we always recover.
+    const handle = (resumptionHandleRef.current && failuresRef.current < 3) ? resumptionHandleRef.current : undefined;
+    console.log(`[Solve] 🔄 Reconnecting (failures=${failuresRef.current}, ${handle ? 'resume' : 'fresh'})`);
+    traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnect', { metadata: { failures: failuresRef.current, kind: handle ? 'resume' : 'fresh' } });
     setIsReconnecting(true);
     optionsRef.current.onReconnecting?.();
     sessionRef.current = null;
 
+    const myGen = ++sessionGenRef.current;
+    const onDrop = () => {
+      if (myGen !== sessionGenRef.current) return; // stale
+      reconnectingRef.current = false;
+      if (endedRef.current) return;
+      failuresRef.current++;
+      scheduleReconnect();
+    };
+
     try {
-      const ephemeralToken = await fetchVoiceToken(modeRef.current, { resumptionHandle: handle });
-      const ai = new GoogleGenAI({
-        apiKey: ephemeralToken,
-        httpOptions: { apiVersion: 'v1alpha' },
-      });
+      const ephemeralToken = await fetchVoiceToken(modeRef.current, handle ? { resumptionHandle: handle } : {});
+      const ai = new GoogleGenAI({ apiKey: ephemeralToken, httpOptions: { apiVersion: 'v1alpha' } });
 
-      traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnect', {
-        metadata: { attempt, handle: handle.slice(0, 20) },
-      });
-
-      const myGen = ++sessionGenRef.current;
       const newSession = await ai.live.connect({
         model: VOICE_MODEL_PATH,
         config: {
           responseModalities: ["AUDIO"] as any,
           tools: [{ googleSearch: {} }],
           outputAudioTranscription: {},
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
-          } as any,
-          sessionResumption: { handle },
-          contextWindowCompression: {
-            triggerTokens: "200000",
-            slidingWindow: { targetTokens: "100000" },
-          },
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } } } as any,
+          sessionResumption: handle ? { handle } : {},
+          contextWindowCompression: { triggerTokens: "200000", slidingWindow: { targetTokens: "100000" } },
         },
         callbacks: {
           onopen: () => {
-            if (myGen !== sessionGenRef.current) return; // stale connection
-            console.log(`[Solve] ✅ Reconnected (attempt ${attempt})`);
-            traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { attempt } });
+            if (myGen !== sessionGenRef.current) return;
+            console.log('[Solve] ✅ Reconnected');
+            traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { kind: handle ? 'resume' : 'fresh' } });
             reconnectingRef.current = false;
             setIsReconnecting(false);
             setIsConnected(true);
-            // Renew the reconnect budget only after the link stays up a while,
-            // so a flapping server still hits MAX_RECONNECTS instead of looping.
-            stableTimerRef.current = setTimeout(() => { reconnectCountRef.current = 0; }, 30_000);
+            // Reset the failure counter once the link proves stable.
+            stableTimerRef.current = setTimeout(() => { failuresRef.current = 0; }, 15_000);
+            // A fresh session lost server-side context → re-send the topic intro.
+            if (!handle && problemContextRef.current) {
+              try { sendTurn(INTRO_BUILDERS[modeRef.current](problemContextRef.current), newSession); } catch { /* noop */ }
+            }
             optionsRef.current.onReconnected?.();
           },
           onmessage: async (response: any) => {
-            if (myGen !== sessionGenRef.current) return; // stale connection
+            if (myGen !== sessionGenRef.current) return;
             try {
               const data = response;
-              if (data.sessionResumptionUpdate?.newHandle) {
-                resumptionHandleRef.current = data.sessionResumptionUpdate.newHandle;
-              }
-              if (data.goAway) {
-                console.warn(`[Solve] ⚠️ GoAway — timeLeft: ${data.goAway.timeLeft} — reconnecting proactively`);
-                if (!endedRef.current) attemptReconnect();
-              }
+              if (data.sessionResumptionUpdate?.newHandle) resumptionHandleRef.current = data.sessionResumptionUpdate.newHandle;
+              if (data.goAway) { console.warn(`[Solve] ⚠️ GoAway timeLeft ${data.goAway.timeLeft}`); if (!endedRef.current) attemptReconnect(); }
               if (data.serverContent?.error) return;
               if (data.serverContent?.turnComplete) { clearCompletedSources(); clientBufRef.current = []; }
               if (data.serverContent?.interrupted) flushAudioQueue();
@@ -532,48 +543,39 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                   }
                 }
               }
-              // Transcript from outputTranscription API (clean spoken text only)
               if (data.serverContent?.outputTranscription?.text) {
                 const text = data.serverContent.outputTranscription.text;
                 fullTranscriptRef.current += `\nCoach: ${text}`;
                 optionsRef.current.onTranscript?.({ role: "ai", text });
-                if (text.includes("[PROBLEM_SOLVED]")) {
-                  optionsRef.current.onProblemSolved?.();
-                }
+                if (text.includes("[PROBLEM_SOLVED]")) optionsRef.current.onProblemSolved?.();
               }
             } catch (e) {
               console.error("[Solve] Failed to parse SDK message (reconnect)", e);
             }
           },
           onerror: (err) => {
-            if (myGen !== sessionGenRef.current) return; // stale connection
+            if (myGen !== sessionGenRef.current) return;
             console.error("[Solve] SDK Error (reconnect):", err);
-            setIsReconnecting(false);
-            if (endedRef.current) { stopSession(); return; }
-            attemptReconnect();
+            onDrop();
           },
           onclose: () => {
-            if (myGen !== sessionGenRef.current) return; // stale connection
-            console.log(`[Solve] SDK Session closed again (server-initiated)`);
-            if (endedRef.current) return; // intentional stop — don't reconnect
-            attemptReconnect();
-          }
-        }
+            if (myGen !== sessionGenRef.current) return;
+            console.log('[Solve] SDK Session closed (reconnect)');
+            onDrop();
+          },
+        },
       });
 
       sessionRef.current = newSession;
-
       // Resend client turns the server hadn't acknowledged before the drop.
-      const pending = [...clientBufRef.current];
-      for (const t of pending) {
+      for (const t of [...clientBufRef.current]) {
         try { newSession.sendClientContent({ turns: [{ role: "user", parts: [{ text: t }] }], turnComplete: true }); } catch { /* noop */ }
       }
-
     } catch (error) {
-      console.error(`[Solve] Reconnect attempt ${attempt} failed:`, error);
+      console.error('[Solve] Reconnect failed (will retry):', error);
       reconnectingRef.current = false;
       setIsReconnecting(false);
-      stopSession();
+      if (!endedRef.current) { failuresRef.current++; scheduleReconnect(); }
     }
   };
 
