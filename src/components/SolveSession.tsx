@@ -91,6 +91,7 @@ export default function SolveSession({
   const lastCodeUpdateAtRef = useRef(0);
   const messagesRef = useRef<Message[]>([]);
   const problemRef = useRef<ProblemData | null>(null);
+  const codeRef = useRef("");
   const lastSentCodeRef = useRef(""); // last code snapshot the coach received
   const sessionIdRef = useRef<string>(resumeState?.id ?? "");
   const ensureSessionId = () => {
@@ -150,6 +151,7 @@ export default function SolveSession({
     sendText, sendCodeUpdate,
   } = useProblemSolvingVoice({
     mode,
+    getResumeContext: () => ({ code: codeRef.current, messages: messagesRef.current }),
     onTranscript: handleTranscript,
     onProblemSolved: handleSolved,
   });
@@ -173,6 +175,7 @@ export default function SolveSession({
   // Keep refs in sync for journaling at end/advance (avoid stale closures).
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { problemRef.current = problem; }, [problem]);
+  useEffect(() => { codeRef.current = code; }, [code]);
 
   // Autosave curated-session snapshot so it can be resumed later.
   useEffect(() => {

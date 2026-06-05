@@ -28,6 +28,9 @@ export interface VoiceTranscript {
 interface UseProblemSolvingVoiceOptions {
   /** Which teaching mode this session runs. Drives the system prompt + intro. Default "solve". */
   mode?: SolveMode;
+  /** Returns the current editor code + recent transcript, replayed on a FRESH
+   * reconnect (no server-side context) so the coach continues seamlessly. */
+  getResumeContext?: () => { code: string; messages: { role: "ai" | "user"; text: string }[] };
   onTranscript?: (t: VoiceTranscript) => void;
   onProblemSolved?: () => void;
   onReconnecting?: () => void;
@@ -538,10 +541,6 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             setIsConnected(true);
             // Reset the failure counter once the link proves stable.
             stableTimerRef.current = setTimeout(() => { failuresRef.current = 0; }, 15_000);
-            // A fresh session lost server-side context → re-send the topic intro.
-            if (!handle && problemContextRef.current) {
-              try { sendTurn(INTRO_BUILDERS[modeRef.current](problemContextRef.current), newSession); } catch { /* noop */ }
-            }
             optionsRef.current.onReconnected?.();
           },
           onmessage: async (response: any) => {
@@ -584,9 +583,30 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       });
 
       sessionRef.current = newSession;
-      // Resend client turns the server hadn't acknowledged before the drop.
-      for (const t of [...clientBufRef.current]) {
-        try { newSession.sendClientContent({ turns: [{ role: "user", parts: [{ text: t }] }], turnComplete: true }); } catch { /* noop */ }
+
+      if (handle) {
+        // Resume kept server-side context — just resend unacknowledged turns.
+        for (const t of [...clientBufRef.current]) {
+          try { newSession.sendClientContent({ turns: [{ role: "user", parts: [{ text: t }] }], turnComplete: true }); } catch { /* noop */ }
+        }
+      } else {
+        // FRESH session lost all context — replay recent conversation history +
+        // current code as turns, then a small "continue" trigger so the coach
+        // picks up seamlessly (and the trigger turn is small → reliable audio).
+        try {
+          const ctx = optionsRef.current.getResumeContext?.();
+          const hist = (ctx?.messages || []).slice(-10).map((m) => ({
+            role: m.role === "ai" ? "model" : "user",
+            parts: [{ text: m.text.replace(/\[[A-Z_]+\]/g, "").trim() }],
+          })).filter((t) => t.parts[0].text);
+          if (hist.length) newSession.sendClientContent({ turns: hist, turnComplete: false });
+          const code = ctx?.code?.trim() ? ctx.code.slice(0, 1500) : "";
+          const codeNote = code ? `الكود الحالي عندي:\n\`\`\`\n${code}\n\`\`\`\n` : "";
+          newSession.sendClientContent({
+            turns: [{ role: "user", parts: [{ text: `${codeNote}اتفضل كمّل من اللي وقفنا عنده، من غير ما تبدأ من الأول.` }] }],
+            turnComplete: true,
+          });
+        } catch { /* noop */ }
       }
     } catch (error) {
       console.error('[Solve] Reconnect failed (will retry):', error);
