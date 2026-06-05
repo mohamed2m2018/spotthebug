@@ -10,6 +10,7 @@ import SyllabusSidebar from "@/components/SyllabusSidebar";
 import { recordSession } from "@/utils/recordSession";
 import { markCovered, useCovered } from "@/lib/coverage";
 import { SQL_SCHEMA_DESCRIPTION } from "@/config/sqlSandbox";
+import { saveSession, type SavedSession } from "@/lib/sessionStore";
 import type { PredefinedProblem } from "@/config/problems";
 import styles from "@/app/session/session.module.css";
 
@@ -51,13 +52,15 @@ interface SolveSessionProps {
   mode?: SolveMode;
   /** Coverage track id ("dsa" | "sql" | "sysdesign"). When set, completed syllabus concepts persist. */
   trackId?: string;
+  /** Restored snapshot when resuming a saved session. */
+  resumeState?: SavedSession;
 }
 
 export default function SolveSession({
   skills, difficulty, topic,
   syllabus, syllabusIndex = 0, syllabusSource,
   onAdvanceSyllabus, onEnd, predefinedProblem,
-  mode = "solve", trackId,
+  mode = "solve", trackId, resumeState,
 }: SolveSessionProps) {
   // Non-solve modes are teaching sessions. SQL runs against a SQLite sandbox.
   const isCodingMode = mode === "solve";
@@ -153,6 +156,17 @@ export default function SolveSession({
       conversationRef.current.scrollTop = conversationRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Autosave curated-session snapshot so it can be resumed later.
+  useEffect(() => {
+    if (!trackId || !problem || !started) return;
+    saveSession({
+      mode, trackId, syllabusIndex,
+      topicLabel: problem.title,
+      code, messages,
+      savedAt: Date.now(),
+    });
+  }, [trackId, problem, started, mode, syllabusIndex, code, messages]);
 
   // Auto-start on mount
   useEffect(() => {
@@ -257,10 +271,14 @@ export default function SolveSession({
         grounded: false,
       };
       setProblem(problemData);
-      setCode(starter);
-      setMessages([{ role: "ai", text: "Session started! Let's learn this together." }]);
-      const problemContext = mode === "sql"
-        ? `Topic to teach: **${conceptTopic}**\n\n${SQL_SCHEMA_DESCRIPTION}\n\nFocused learning session on this single topic. Teach it from the ground up following the learner profile, using the practice tables above, then give the developer a query to write and Run against this database.`
+      const resuming = !!(resumeState && resumeState.messages?.length);
+      setCode(resuming ? (resumeState!.code || starter) : starter);
+      setMessages(resuming ? resumeState!.messages : [{ role: "ai", text: "Session started! Let's learn this together." }]);
+      const schemaNote = mode === "sql" ? `\n\n${SQL_SCHEMA_DESCRIPTION}` : "";
+      const problemContext = resuming
+        ? `Resuming the topic **${conceptTopic}**. Welcome the developer back in ONE short Arabic sentence, then continue teaching it.${schemaNote}`
+        : mode === "sql"
+        ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\nFocused learning session on this single topic. Teach it from the ground up following the learner profile, using the practice tables above, then give the developer a query to write and Run against this database.`
         : `Topic to teach: **${conceptTopic}**\n\nThis is a focused learning session on this single topic. Teach it from the ground up following the learner profile, then give the developer something to try.`;
       try {
         await startSession(problemContext);

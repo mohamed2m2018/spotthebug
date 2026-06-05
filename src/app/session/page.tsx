@@ -10,6 +10,7 @@ import { PREDEFINED_PROBLEMS, PROBLEM_CATEGORIES, getProblemById, type Predefine
 import { MODE_SYLLABI, DSA_SYLLABUS, type ModeSyllabus } from "@/config/syllabi";
 import CoverageOverview from "@/components/CoverageOverview";
 import { getCovered } from "@/lib/coverage";
+import { useSavedSession, clearSession, type SavedSession } from "@/lib/sessionStore";
 
 import styles from "./session.module.css";
 
@@ -50,6 +51,9 @@ export default function SessionPage() {
 
   // Coverage track for curated crash-course modes (null = no tracking)
   const [trackId, setTrackId] = useState<string | null>(null);
+  // Resume support
+  const [resumeState, setResumeState] = useState<SavedSession | null>(null);
+  const savedSession = useSavedSession();
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/login");
@@ -71,6 +75,7 @@ export default function SessionPage() {
     setSelectedProblemId(null);
     setShowProblemPicker(false);
     setTrackId(null);
+    setResumeState(null);
     resetSyllabus();
   };
 
@@ -128,6 +133,19 @@ export default function SessionPage() {
     setPhase("setup"); // show topic picker first
   };
 
+  // Resume a previously saved session: restore mode, syllabus position, and the
+  // saved code/transcript, then jump straight into the active session.
+  const resumeSaved = (s: SavedSession) => {
+    const syl = s.trackId === "dsa" ? DSA_SYLLABUS : s.trackId === "sql" ? MODE_SYLLABI.sql : MODE_SYLLABI.sysdesign;
+    resetSetup();
+    setMode(s.mode);
+    setTrackId(s.trackId ?? null);
+    setSyllabusData({ syllabus: syl.syllabus, source: syl.source, description: syl.description });
+    setSyllabusIndex(s.syllabusIndex);
+    setResumeState(s);
+    setPhase("active");
+  };
+
   // Current topic: syllabus item if active, otherwise free-text topic
   const activeTopic = syllabusData
     ? syllabusData.syllabus[syllabusIndex]
@@ -143,6 +161,17 @@ export default function SessionPage() {
         <div className={styles.modeSelectCard}>
           <h1 className={styles.setupTitle}>🐛 Choose Your Mode</h1>
           <p className={styles.setupSubtitle}>How do you want to level up today?</p>
+          {savedSession && (
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.8rem 1rem", margin: "0 auto 1.25rem", maxWidth: "640px", borderRadius: "12px", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.08)" }}>
+              <span style={{ fontSize: "1.3rem" }}>⏯️</span>
+              <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
+                <div style={{ color: "#86efac", fontWeight: 700, fontSize: "0.9rem" }}>Resume last session</div>
+                <div style={{ color: "#94a3b8", fontSize: "0.8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{savedSession.topicLabel}</div>
+              </div>
+              <button onClick={() => resumeSaved(savedSession)} style={{ padding: "0.5rem 1rem", borderRadius: "8px", border: "none", background: "#22c55e", color: "#0b0b0b", fontWeight: 700, cursor: "pointer" }}>Resume</button>
+              <button onClick={() => clearSession()} style={{ padding: "0.5rem 0.75rem", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.15)", background: "transparent", color: "#94a3b8", cursor: "pointer" }}>Discard</button>
+            </div>
+          )}
           <div className={styles.modeGrid}>
             <button
               className={styles.modeCard}
@@ -509,9 +538,10 @@ export default function SessionPage() {
         syllabusIndex={syllabusData ? syllabusIndex : undefined}
         syllabusSource={syllabusData?.source}
         onAdvanceSyllabus={syllabusData ? handleAdvanceSyllabus : undefined}
-        onEnd={() => { setPhase("select"); setMode(null); }}
+        onEnd={() => { setPhase("select"); setMode(null); setResumeState(null); }}
         predefinedProblem={predefinedProblem}
         trackId={trackId ?? undefined}
+        resumeState={resumeState ?? undefined}
       />
     );
   }
@@ -528,8 +558,9 @@ export default function SessionPage() {
         syllabusIndex={syllabusData ? syllabusIndex : undefined}
         syllabusSource={syllabusData?.source}
         onAdvanceSyllabus={syllabusData ? handleAdvanceSyllabus : undefined}
-        onEnd={() => { setPhase("select"); setMode(null); }}
+        onEnd={() => { setPhase("select"); setMode(null); setResumeState(null); }}
         trackId={trackId ?? undefined}
+        resumeState={resumeState ?? undefined}
       />
     );
   }
