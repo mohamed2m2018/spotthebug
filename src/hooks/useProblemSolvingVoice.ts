@@ -71,6 +71,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const endedRef = useRef(false);
   // Resets the reconnect budget once a reconnected session proves stable.
   const stableTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Guards against concurrent reconnects (onerror + onclose both firing).
+  const reconnectingRef = useRef(false);
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -84,7 +86,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const resumptionHandleRef = useRef<string | undefined>(undefined);
   const problemContextRef = useRef<string | undefined>(undefined);
   const reconnectCountRef = useRef(0);
-  const MAX_RECONNECTS = 2;
+  const MAX_RECONNECTS = 5;
 
   // ── AI Mute (pause AI audio output) ──
   const aiMutedRef = useRef(false);
@@ -132,6 +134,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
   const stopSession = useCallback(() => {
     endedRef.current = true; // must be set before close() so onclose skips reconnect
+    reconnectingRef.current = false;
     if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     processorRef.current?.disconnect();
     processorRef.current = null;
@@ -198,6 +201,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       sessionRef.current = null;
     }
     endedRef.current = false;
+    reconnectingRef.current = false;
+    reconnectCountRef.current = 0;
     fullTranscriptRef.current = "";
 
     try {
@@ -361,7 +366,10 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           },
           onerror: (err) => {
              console.error("[Solve] SDK Error:", err);
-             stopSession();
+             if (endedRef.current) { stopSession(); return; }
+             // The connection-limit drop often surfaces as an error, not a clean
+             // close — try to resume rather than killing the session.
+             attemptReconnect();
           },
           onclose: () => {
              console.log("[Solve] SDK Session closed (server-initiated)");
@@ -387,6 +395,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
   const attemptReconnect = async () => {
     if (endedRef.current) return; // session was intentionally stopped
+    if (reconnectingRef.current) return; // already reconnecting (onerror + onclose race)
+    reconnectingRef.current = true;
     if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     reconnectCountRef.current++;
     const attempt = reconnectCountRef.current;
@@ -439,6 +449,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           onopen: () => {
             console.log(`[Solve] ✅ Reconnected (attempt ${attempt})`);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { attempt } });
+            reconnectingRef.current = false;
             setIsReconnecting(false);
             setIsConnected(true);
             // Renew the reconnect budget only after the link stays up a while,
@@ -494,7 +505,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           onerror: (err) => {
             console.error("[Solve] SDK Error (reconnect):", err);
             setIsReconnecting(false);
-            stopSession();
+            if (endedRef.current) { stopSession(); return; }
+            attemptReconnect();
           },
           onclose: () => {
             console.log(`[Solve] SDK Session closed again (server-initiated)`);
@@ -508,6 +520,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
     } catch (error) {
       console.error(`[Solve] Reconnect attempt ${attempt} failed:`, error);
+      reconnectingRef.current = false;
       setIsReconnecting(false);
       stopSession();
     }
