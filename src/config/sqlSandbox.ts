@@ -85,6 +85,10 @@ INSERT INTO orders (id, customer_id, product_id, quantity, order_date, amount) V
   (10, 2, 4, 1, '2023-05-21', 500.00);
 `;
 
+/** Compact schema for the session INTRO — kept small so the opening turn stays
+ * under the size that makes the model reply text-only (no audio). */
+export const SQL_SCHEMA_COMPACT = "Practice tables: departments(id, name); employees(id, name, department_id, manager_id→employees.id, salary, hire_date); customers(id, name, country); products(id, name, category, price); orders(id, customer_id, product_id, quantity, order_date, amount).";
+
 /** Human-readable schema, injected into the SQL session context for the coach. */
 export const SQL_SCHEMA_DESCRIPTION = `Practice database (SQLite). Available tables:
 - departments(id, name)

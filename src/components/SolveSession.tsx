@@ -9,7 +9,7 @@ import CodeEditor from "@/components/CodeEditor";
 import SyllabusSidebar from "@/components/SyllabusSidebar";
 import { recordSession } from "@/utils/recordSession";
 import { markCovered, useCovered } from "@/lib/coverage";
-import { SQL_SCHEMA_DESCRIPTION } from "@/config/sqlSandbox";
+import { SQL_SCHEMA_DESCRIPTION, SQL_SCHEMA_COMPACT } from "@/config/sqlSandbox";
 import { saveSession, type SavedSession } from "@/lib/sessionStore";
 import { appendJournal } from "@/lib/learningJournal";
 import type { PredefinedProblem } from "@/config/problems";
@@ -294,7 +294,9 @@ export default function SolveSession({
       const resuming = !!(resumeState && resumeState.messages?.length);
       setCode(resuming ? (resumeState!.code || starter) : starter);
       setMessages(resuming ? resumeState!.messages : [{ role: "ai", text: "Session started! Let's learn this together." }]);
-      const schemaNote = mode === "sql" ? `\n\n${SQL_SCHEMA_DESCRIPTION}` : "";
+      // Compact schema in the INTRO keeps the opening turn small (big intros →
+      // text-only/no audio). The full schema still shows in the problem panel.
+      const schemaNote = mode === "sql" ? `\n\n${SQL_SCHEMA_COMPACT}` : "";
       // Resume uses the SAME prompt shape as a fresh start (which reliably gets
       // audio) + a short "continuing" note. A recap block of prior dialogue here
       // made the model reply text-only (no audio), so we don't include it.
