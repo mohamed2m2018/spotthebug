@@ -353,7 +353,8 @@ export function buildSolveIntroPrompt(problemContext: string): string {
 
 ${problemContext}
 
-Greet in ONE short Arabic sentence naming the topic, then FIRST teach the underlying PATTERN/CONCEPT thoroughly in Arabic, following your full teaching method (first-principles arc, mental-model first, one small idea per turn, Socratic when stuck, check understanding). Build real depth across several turns. THEN, once they grasp the pattern, POSE THE ACTUAL PROBLEM: state the input, what to return, and a tiny concrete example (e.g. for Two Sum: nums=[2,7,11,15], target=9 → [0,1]), and ask the developer to write their solution in the code editor — coach them through solving it and tie it back to the pattern + time/space complexity. So: teach the concept deeply first, then apply it on this specific problem in the editor. Speak Arabic throughout.`;
+This is your FIRST message — keep it SHORT: ~2-4 sentences, roughly 15-25 seconds of speech. In Arabic: greet in one short sentence, then give ONLY the first beat — motivate WHY this pattern matters / what problem it solves — and end with ONE question, then STOP and wait.
+Hard limits for this first message: do NOT explain the whole concept, do NOT walk the full teaching arc, do NOT give the analogy AND the mechanism AND the example all at once, and do NOT pose the coding problem yet. You will build the depth over the NEXT turns, ONE small beat each, checking in between — and only later, once they grasp the pattern, pose the actual problem in the editor. Speak Arabic.`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -438,7 +439,7 @@ export function buildSqlIntroPrompt(problemContext: string): string {
 
 ${problemContext}
 
-Greet in one short Arabic sentence naming the topic, then begin teaching it in Arabic, following your teaching method (mental-model-first, one small idea per turn, Socratic when stuck). Speak Arabic throughout.`;
+This is your FIRST message — keep it SHORT: ~2-4 sentences, roughly 15-25 seconds of speech. In Arabic: greet in one short sentence, then give ONLY the first beat (motivate the topic) and end with ONE question, then STOP and wait. Do NOT explain the whole topic or walk the full arc in this first message — build the depth over the NEXT turns, one small beat each. Speak Arabic.`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -524,7 +525,7 @@ export function buildSysdesignIntroPrompt(problemContext: string): string {
 
 ${problemContext}
 
-Greet in one short Arabic sentence naming the topic, then begin teaching it in Arabic, following your teaching method (mental-model-first, one small idea per turn, Socratic when stuck). The editor is a scratchpad for class/design sketches. Speak Arabic throughout.`;
+This is your FIRST message — keep it SHORT: ~2-4 sentences, roughly 15-25 seconds of speech. In Arabic: greet in one short sentence, then give ONLY the first beat (motivate the topic) and end with ONE question, then STOP and wait. Do NOT explain the whole topic or walk the full arc in this first message — build the depth over the NEXT turns, one small beat each. The editor is a scratchpad for class/design sketches. Speak Arabic.`;
 }
 
 /** Fallback intro when no problem context is provided. */

@@ -316,10 +316,10 @@ export default function SolveSession({
       // made the model reply text-only (no audio), so we don't include it.
       const continuingNote = "This is a CONTINUING session — the developer already began this topic, so pick up where you left off and do NOT repeat the introduction.";
       const problemContext = mode === "sql"
-        ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer a query to write and Run against this database.`
+        ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\n${resuming ? continuingNote + " " : ""}Teach the concept first (across several short turns), then give the developer a query to write and Run.`
         : mode === "sysdesign"
-        ? `Topic to teach: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer a design to sketch.`
-        : `Problem to solve: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}FIRST teach the underlying pattern/concept thoroughly following the learner profile (first-principles, mental-model first, depth across several turns). THEN pose this exact problem (state input, expected output, a tiny example), have them write the solution in the editor, and coach them through solving it — tying it back to the pattern and its complexity.`;
+        ? `Topic to teach: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach the concept first (across several short turns), then give the developer a design to sketch.`
+        : `Problem to solve: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach the underlying pattern first, concept-first, across several short turns; later pose this problem and have them solve it in the editor.`;
       try {
         await startSession(problemContext);
         setStarted(true);
