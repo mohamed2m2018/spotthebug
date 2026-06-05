@@ -311,15 +311,23 @@ export default function SolveSession({
       // Compact schema in the INTRO keeps the opening turn small (big intros →
       // text-only/no audio). The full schema still shows in the problem panel.
       const schemaNote = mode === "sql" ? `\n\n${SQL_SCHEMA_COMPACT}` : "";
-      // Resume uses the SAME prompt shape as a fresh start (which reliably gets
-      // audio) + a short "continuing" note. A recap block of prior dialogue here
-      // made the model reply text-only (no audio), so we don't include it.
-      const continuingNote = "This is a CONTINUING session — the developer already began this topic, so pick up where you left off and do NOT repeat the introduction.";
-      const problemContext = mode === "sql"
-        ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\n${resuming ? continuingNote + " " : ""}Teach the concept first (across several short turns), then give the developer a query to write and Run.`
+      // RESUME: a distinct "continue" prompt with a ONE-LINE recap of the last
+      // thing the coach said — so it picks up from the next step instead of
+      // re-greeting and re-teaching the whole concept from scratch (the old
+      // prompt told it to "teach the concept first", which restarted the lesson).
+      const lastAiSaid = resuming
+        ? [...resumeState!.messages].reverse()
+            .map((m) => (m.role === "ai" ? m.text.replace(/\[[A-Z_]+\]/g, "").trim() : ""))
+            .find((t) => t && !t.startsWith("Session started"))
+        : "";
+      const recapNote = lastAiSaid ? ` آخر نقطة وقفنا عندها: "${lastAiSaid.slice(0, 180)}".` : "";
+      const problemContext = resuming
+        ? `CONTINUING SESSION — topic: **${conceptTopic}**.${recapNote} Pick up from the NEXT step. Do NOT greet again and do NOT re-explain what was already covered.`
+        : mode === "sql"
+        ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\nTeach the concept first (across several short turns), then give the developer a query to write and Run.`
         : mode === "sysdesign"
-        ? `Topic to teach: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach the concept first (across several short turns), then give the developer a design to sketch.`
-        : `Problem to solve: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach the underlying pattern first, concept-first, across several short turns; later pose this problem and have them solve it in the editor.`;
+        ? `Topic to teach: **${conceptTopic}**\n\nTeach the concept first (across several short turns), then give the developer a design to sketch.`
+        : `Problem to solve: **${conceptTopic}**\n\nTeach the underlying pattern first, concept-first, across several short turns; later pose this problem and have them solve it in the editor.`;
       try {
         await startSession(problemContext);
         setStarted(true);

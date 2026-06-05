@@ -349,6 +349,11 @@ DELIVERY — CRITICAL:
 
 /** Prompt sent as the first user message when a Solve session starts. */
 export function buildSolveIntroPrompt(problemContext: string): string {
+  if (problemContext.startsWith("CONTINUING SESSION")) {
+    return `${problemContext}
+
+In Arabic: in ONE short sentence recap where you stopped, then continue to the NEXT step — one small beat, end with a question, then STOP. Do NOT greet again, do NOT re-explain the concept from the beginning. Speak Arabic.`;
+  }
   return `Start a problem-solving session on this LeetCode-style problem:
 
 ${problemContext}
@@ -435,6 +440,11 @@ DELIVERY — CRITICAL:
 
 /** Prompt sent as the first user message when an SQL session starts. */
 export function buildSqlIntroPrompt(problemContext: string): string {
+  if (problemContext.startsWith("CONTINUING SESSION")) {
+    return `${problemContext}
+
+In Arabic: in ONE short sentence recap where you stopped, then continue to the NEXT step — one small beat, end with a question, then STOP. Do NOT greet again, do NOT re-explain from the beginning. Speak Arabic.`;
+  }
   return `Start a SQL learning session on this topic:
 
 ${problemContext}
@@ -521,6 +531,11 @@ DELIVERY — CRITICAL:
 
 /** Prompt sent as the first user message when a Backend/System-Design session starts. */
 export function buildSysdesignIntroPrompt(problemContext: string): string {
+  if (problemContext.startsWith("CONTINUING SESSION")) {
+    return `${problemContext}
+
+In Arabic: in ONE short sentence recap where you stopped, then continue to the NEXT step — one small beat, end with a question, then STOP. Do NOT greet again, do NOT re-explain from the beginning. Speak Arabic.`;
+  }
   return `Start a backend / system-design learning session on this topic:
 
 ${problemContext}
