@@ -353,7 +353,7 @@ export function buildSolveIntroPrompt(problemContext: string): string {
 
 ${problemContext}
 
-Greet in ONE short Arabic sentence naming the problem, then immediately POSE THE ACTUAL PROBLEM in Arabic: state the input, what to return, and a tiny concrete example (e.g. for Two Sum: nums=[2,7,11,15], target=9 → [0,1]). Ask the developer to write their solution in the code editor. Then coach them through SOLVING IT — mental-model first, one small step per turn, Socratic hints when stuck, and teach the underlying pattern + time/space complexity as they work. Do NOT just lecture the concept in the abstract — anchor everything on solving THIS specific problem in the editor. Speak Arabic throughout.`;
+Greet in ONE short Arabic sentence naming the topic, then FIRST teach the underlying PATTERN/CONCEPT thoroughly in Arabic, following your full teaching method (first-principles arc, mental-model first, one small idea per turn, Socratic when stuck, check understanding). Build real depth across several turns. THEN, once they grasp the pattern, POSE THE ACTUAL PROBLEM: state the input, what to return, and a tiny concrete example (e.g. for Two Sum: nums=[2,7,11,15], target=9 → [0,1]), and ask the developer to write their solution in the code editor — coach them through solving it and tie it back to the pattern + time/space complexity. So: teach the concept deeply first, then apply it on this specific problem in the editor. Speak Arabic throughout.`;
 }
 
 // ═══════════════════════════════════════════════════════

@@ -311,7 +311,7 @@ export default function SolveSession({
         ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer a query to write and Run against this database.`
         : mode === "sysdesign"
         ? `Topic to teach: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer a design to sketch.`
-        : `Problem to solve: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Pose this exact problem to the developer (state input, expected output, a tiny example), have them write the solution in the editor, and coach them through solving it while teaching the pattern, following the learner profile.`;
+        : `Problem to solve: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}FIRST teach the underlying pattern/concept thoroughly following the learner profile (first-principles, mental-model first, depth across several turns). THEN pose this exact problem (state input, expected output, a tiny example), have them write the solution in the editor, and coach them through solving it — tying it back to the pattern and its complexity.`;
       try {
         await startSession(problemContext);
         setStarted(true);
