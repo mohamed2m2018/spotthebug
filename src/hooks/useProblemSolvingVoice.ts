@@ -73,6 +73,9 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const stableTimerRef = useRef<NodeJS.Timeout | null>(null);
   // Guards against concurrent reconnects (onerror + onclose both firing).
   const reconnectingRef = useRef(false);
+  // Each live connection gets a generation id; callbacks from a stale connection
+  // (e.g. the old session closing after a proactive goAway reconnect) are ignored.
+  const sessionGenRef = useRef(0);
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -121,6 +124,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const stopSession = useCallback(() => {
     endedRef.current = true; // must be set before close() so onclose skips reconnect
     reconnectingRef.current = false;
+    sessionGenRef.current++; // invalidate any in-flight session callbacks
     if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     processorRef.current?.disconnect();
     processorRef.current = null;
@@ -259,6 +263,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       let resolveSession: (s: Session) => void;
       const sessionReady = new Promise<Session>((r) => { resolveSession = r; });
 
+      const myGen = ++sessionGenRef.current;
       const session = await ai.live.connect({
         model: VOICE_MODEL_PATH,
         config: {
@@ -277,6 +282,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
         },
         callbacks: {
           onopen: async () => {
+            if (myGen !== sessionGenRef.current) return; // stale connection
             console.log("[Solve] ✅ SDK Session opened — starting mic");
             // The dev StrictMode mount/unmount cycle can leave endedRef=true via
             // the cleanup's stopSession; the live session is genuinely open here,
@@ -290,6 +296,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             startMicAndContext(liveSession);
           },
           onmessage: async (response: any) => {
+            if (myGen !== sessionGenRef.current) return; // stale connection
             try {
               const data = response;
 
@@ -348,6 +355,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             }
           },
           onerror: (err) => {
+             if (myGen !== sessionGenRef.current) return; // stale connection
              console.error("[Solve] SDK Error:", err);
              if (endedRef.current) { stopSession(); return; }
              // The connection-limit drop often surfaces as an error, not a clean
@@ -355,6 +363,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
              attemptReconnect();
           },
           onclose: () => {
+             if (myGen !== sessionGenRef.current) return; // stale connection (e.g. old session after a goAway reconnect)
              console.log("[Solve] SDK Session closed (server-initiated)");
              if (endedRef.current) return; // intentional stop — don't reconnect
              try { traceClient.traceEvent(traceSessionIdRef.current, 'ws.close'); } catch { /* noop */ }
@@ -413,6 +422,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
         metadata: { attempt, handle: handle.slice(0, 20) },
       });
 
+      const myGen = ++sessionGenRef.current;
       const newSession = await ai.live.connect({
         model: VOICE_MODEL_PATH,
         config: {
@@ -430,6 +440,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
         },
         callbacks: {
           onopen: () => {
+            if (myGen !== sessionGenRef.current) return; // stale connection
             console.log(`[Solve] ✅ Reconnected (attempt ${attempt})`);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { attempt } });
             reconnectingRef.current = false;
@@ -441,6 +452,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             optionsRef.current.onReconnected?.();
           },
           onmessage: async (response: any) => {
+            if (myGen !== sessionGenRef.current) return; // stale connection
             try {
               const data = response;
               if (data.sessionResumptionUpdate?.newHandle) {
@@ -474,12 +486,14 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             }
           },
           onerror: (err) => {
+            if (myGen !== sessionGenRef.current) return; // stale connection
             console.error("[Solve] SDK Error (reconnect):", err);
             setIsReconnecting(false);
             if (endedRef.current) { stopSession(); return; }
             attemptReconnect();
           },
           onclose: () => {
+            if (myGen !== sessionGenRef.current) return; // stale connection
             console.log(`[Solve] SDK Session closed again (server-initiated)`);
             if (endedRef.current) return; // intentional stop — don't reconnect
             attemptReconnect();
