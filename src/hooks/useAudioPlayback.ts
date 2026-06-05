@@ -62,8 +62,12 @@ export function useAudioPlayback(logPrefix: string = "[Voice]"): UseAudioPlaybac
     };
 
     const currentTime = ctx.currentTime;
-    if (nextPlayTimeRef.current < currentTime) {
-      nextPlayTimeRef.current = currentTime;
+    // Jitter cushion: when starting fresh or after an underrun (chunks arrived
+    // late and the schedule fell back to realtime), schedule slightly in the
+    // future so back-to-back chunks play gaplessly instead of clicking/stuttering.
+    const LEAD = 0.15;
+    if (nextPlayTimeRef.current < currentTime + 0.03) {
+      nextPlayTimeRef.current = currentTime + LEAD;
     }
     source.start(nextPlayTimeRef.current);
     const scheduledDuration = audioBuffer.duration;
