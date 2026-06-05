@@ -11,6 +11,7 @@ import { MODE_SYLLABI, DSA_SYLLABUS, type ModeSyllabus } from "@/config/syllabi"
 import CoverageOverview from "@/components/CoverageOverview";
 import { getCovered } from "@/lib/coverage";
 import { useSavedSession, clearSession, type SavedSession } from "@/lib/sessionStore";
+import { generateStudyGuide } from "@/lib/studyGuide";
 
 import styles from "./session.module.css";
 
@@ -398,6 +399,12 @@ export default function SessionPage() {
               );
             })}
           </ol>
+          <button
+            onClick={() => generateStudyGuide(trackId, syllabusData.syllabus).catch((e) => console.error(e))}
+            style={{ width: "100%", marginBottom: "0.75rem", padding: "0.7rem", borderRadius: "10px", border: "1px solid rgba(139,92,246,0.4)", background: "rgba(139,92,246,0.08)", color: "#c4b5fd", fontWeight: 700, cursor: "pointer" }}
+          >
+            📄 Generate Study Guide (PDF) — cheat-sheet + your mistakes & questions
+          </button>
           <div className={styles.setupActions}>
             <button className={styles.backBtn} onClick={() => { setPhase("select"); setMode(null); setTrackId(null); }}>← Back</button>
           </div>

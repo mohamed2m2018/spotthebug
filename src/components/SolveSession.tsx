@@ -11,6 +11,7 @@ import { recordSession } from "@/utils/recordSession";
 import { markCovered, useCovered } from "@/lib/coverage";
 import { SQL_SCHEMA_DESCRIPTION } from "@/config/sqlSandbox";
 import { saveSession, type SavedSession } from "@/lib/sessionStore";
+import { appendJournal } from "@/lib/learningJournal";
 import type { PredefinedProblem } from "@/config/problems";
 import styles from "@/app/session/session.module.css";
 
@@ -88,6 +89,17 @@ export default function SolveSession({
   const conversationRef = useRef<HTMLDivElement>(null);
   const codeUpdateTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastCodeUpdateAtRef = useRef(0);
+  const messagesRef = useRef<Message[]>([]);
+  const problemRef = useRef<ProblemData | null>(null);
+
+  // Save this topic's transcript to the learning journal (for the study guide).
+  const journalCurrent = useCallback(() => {
+    if (!trackId || !problemRef.current || messagesRef.current.length <= 1) return;
+    const transcript = messagesRef.current
+      .map(m => `${m.role === "ai" ? "Coach" : "Developer"}: ${m.text}`)
+      .join("\n");
+    appendJournal(trackId, problemRef.current.title, transcript);
+  }, [trackId]);
   const mountedRef = useRef(false);
 
   // ── Transcript handler ──
@@ -110,6 +122,7 @@ export default function SolveSession({
   const handleSolved = useCallback(() => {
     setSolvedCount(prev => prev + 1);
     setShowSolvedBanner(true);
+    journalCurrent(); // save this topic's transcript before advancing
     // Persist this concept as covered (visible in the progress tracker).
     if (trackId && syllabus && syllabus[syllabusIndex]) {
       markCovered(trackId, syllabus[syllabusIndex]);
@@ -157,6 +170,10 @@ export default function SolveSession({
     }
   }, [messages]);
 
+  // Keep refs in sync for journaling at end/advance (avoid stale closures).
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { problemRef.current = problem; }, [problem]);
+
   // Autosave curated-session snapshot so it can be resumed later.
   useEffect(() => {
     if (!trackId || !problem || !started) return;
@@ -190,6 +207,7 @@ export default function SolveSession({
   };
 
   const handleEnd = () => {
+    journalCurrent(); // save transcript for the study guide
     stopSession();
     if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
     // Record session to database
