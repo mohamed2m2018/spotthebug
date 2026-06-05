@@ -78,8 +78,10 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const sessionGenRef = useRef(0);
   const failuresRef = useRef(0); // consecutive reconnect failures → backoff + handle fallback
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const turnHadAudioRef = useRef(false); // diag: did the current turn deliver audio?
+  const turnHadAudioRef = useRef(false); // did the current turn deliver audio?
+  const turnHadTranscriptRef = useRef(false); // did the current turn deliver transcript?
   const audioChunkCountRef = useRef(0); // diag: audio chunks received this turn
+  const voiceRetriedRef = useRef(false); // retried-for-voice once on a text-only turn?
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -230,6 +232,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     reconnectingRef.current = false;
     reconnectCountRef.current = 0;
     clientBufRef.current = [];
+    voiceRetriedRef.current = false;
+    turnHadTranscriptRef.current = false;
     fullTranscriptRef.current = "";
 
     try {
@@ -369,7 +373,6 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.serverContent?.turnComplete) {
                 clearCompletedSources();
                 clientBufRef.current = []; // server consumed our turn → ack
-                // DIAG: report whether this whole turn delivered any audio.
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.turnEnd', {
                   metadata: {
                     audioReceived: turnHadAudioRef.current,
@@ -378,7 +381,17 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                     aiMuted: aiMutedRef.current,
                   },
                 });
+                // Voice-reliability: gemini-3.1 sometimes returns a turn text-only
+                // (transcript, no audio). If so, nudge it ONCE to say it in voice.
+                if (turnHadAudioRef.current) {
+                  voiceRetriedRef.current = false;
+                } else if (turnHadTranscriptRef.current && !voiceRetriedRef.current && !aiMutedRef.current && !endedRef.current) {
+                  voiceRetriedRef.current = true;
+                  traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceRetry');
+                  sendTurn("من فضلك قول نفس الكلام ده بصوت (صوت مسموع)، مش نص.");
+                }
                 turnHadAudioRef.current = false;
+                turnHadTranscriptRef.current = false;
                 audioChunkCountRef.current = 0;
               }
 
@@ -409,6 +422,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               // AI transcript — use outputTranscription API (clean spoken text only)
               if (data.serverContent?.outputTranscription?.text) {
                 const text = data.serverContent.outputTranscription.text;
+                turnHadTranscriptRef.current = true;
                 fullTranscriptRef.current += `\nCoach: ${text}`;
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { metadata: { len: text.length } });
                 optionsRef.current.onTranscript?.({ role: "ai", text });
