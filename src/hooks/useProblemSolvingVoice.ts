@@ -91,28 +91,6 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   // ── AI Mute (pause AI audio output) ──
   const aiMutedRef = useRef(false);
 
-  // ── Spoken-audio fallback (browser TTS) ──
-  // Gemini native audio arrives reliably server-side but NOT through the browser
-  // web SDK (only the transcript text comes). When a turn completes with no
-  // native audio chunks, speak the transcript via the browser's speech engine so
-  // the learner always hears the coach.
-  const nativeAudioThisTurnRef = useRef(false);
-  const turnTextRef = useRef("");
-  const speakFallback = useCallback((text: string) => {
-    try {
-      const synth = window.speechSynthesis;
-      if (!synth) return;
-      const clean = text.replace(/\[[A-Z_]+\]/g, "").trim();
-      if (!clean) return;
-      const u = new SpeechSynthesisUtterance(clean);
-      u.lang = "ar";
-      u.rate = 0.9;
-      const arVoice = synth.getVoices().find((v) => v.lang?.toLowerCase().startsWith("ar"));
-      if (arVoice) u.voice = arVoice;
-      synth.speak(u);
-    } catch { /* TTS unavailable */ }
-  }, []);
-
   // ── Text / Code Sending ──
 
   const sendText = useCallback((text: string) => {
@@ -147,7 +125,6 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     setIsConnected(false);
     setIsRecording(false);
     flushAudioQueue();
-    try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
 
     if (traceSessionIdRef.current) {
       traceClient.endTrace(traceSessionIdRef.current);
@@ -186,7 +163,6 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     setIsAiMuted(next);
     if (next) {
       flushAudioQueue();
-      try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
       console.log("[Solve] ⏸️ AI audio paused");
     } else {
       console.log("[Solve] ▶️ AI audio resumed");
@@ -322,26 +298,17 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
               if (data.serverContent?.turnComplete) {
                 clearCompletedSources();
-                // No native audio this turn → speak the transcript via browser TTS.
-                if (!aiMutedRef.current && !nativeAudioThisTurnRef.current && turnTextRef.current.trim()) {
-                  speakFallback(turnTextRef.current);
-                }
-                turnTextRef.current = "";
-                nativeAudioThisTurnRef.current = false;
               }
 
               if (data.serverContent?.interrupted) {
                 flushAudioQueue();
-                try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
-                turnTextRef.current = "";
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.interrupted');
               }
 
-              // Audio chunks (native audio — used when the browser receives it)
+              // Audio chunks
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
-                    nativeAudioThisTurnRef.current = true;
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
@@ -351,7 +318,6 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.serverContent?.outputTranscription?.text) {
                 const text = data.serverContent.outputTranscription.text;
                 fullTranscriptRef.current += `\nCoach: ${text}`;
-                turnTextRef.current += text;
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
                 optionsRef.current.onTranscript?.({ role: "ai", text });
                 if (text.includes("[PROBLEM_SOLVED]")) {
@@ -467,23 +433,11 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 console.warn(`[Solve] ⚠️ GoAway received — timeLeft: ${data.goAway.timeLeft}`);
               }
               if (data.serverContent?.error) return;
-              if (data.serverContent?.turnComplete) {
-                clearCompletedSources();
-                if (!aiMutedRef.current && !nativeAudioThisTurnRef.current && turnTextRef.current.trim()) {
-                  speakFallback(turnTextRef.current);
-                }
-                turnTextRef.current = "";
-                nativeAudioThisTurnRef.current = false;
-              }
-              if (data.serverContent?.interrupted) {
-                flushAudioQueue();
-                try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
-                turnTextRef.current = "";
-              }
+              if (data.serverContent?.turnComplete) clearCompletedSources();
+              if (data.serverContent?.interrupted) flushAudioQueue();
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
-                    nativeAudioThisTurnRef.current = true;
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
@@ -492,7 +446,6 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.serverContent?.outputTranscription?.text) {
                 const text = data.serverContent.outputTranscription.text;
                 fullTranscriptRef.current += `\nCoach: ${text}`;
-                turnTextRef.current += text;
                 optionsRef.current.onTranscript?.({ role: "ai", text });
                 if (text.includes("[PROBLEM_SOLVED]")) {
                   optionsRef.current.onProblemSolved?.();

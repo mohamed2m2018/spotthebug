@@ -84,6 +84,7 @@ export default function SolveSession({
   const [executionOutput, setExecutionOutput] = useState<string | null>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const codeUpdateTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastCodeUpdateAtRef = useRef(0);
   const mountedRef = useRef(false);
 
   // ── Transcript handler ──
@@ -164,7 +165,14 @@ export default function SolveSession({
   const handleCodeEdit = (newCode: string) => {
     setCode(newCode);
     if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
-    codeUpdateTimerRef.current = setTimeout(() => sendCodeUpdate(newCode), 2000);
+    // Stay silent while they're typing. Only nudge the coach after 10s of no
+    // edits, and at most once every 45s so it doesn't interrupt frequently.
+    codeUpdateTimerRef.current = setTimeout(() => {
+      const now = Date.now();
+      if (now - lastCodeUpdateAtRef.current < 45000) return;
+      lastCodeUpdateAtRef.current = now;
+      sendCodeUpdate(newCode);
+    }, 10000);
   };
 
   const handleEnd = () => {
