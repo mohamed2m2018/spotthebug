@@ -91,6 +91,7 @@ export default function SolveSession({
   const lastCodeUpdateAtRef = useRef(0);
   const messagesRef = useRef<Message[]>([]);
   const problemRef = useRef<ProblemData | null>(null);
+  const lastSentCodeRef = useRef(""); // last code snapshot the coach received
 
   // Save this topic's transcript to the learning journal (for the study guide).
   const journalCurrent = useCallback(() => {
@@ -202,6 +203,7 @@ export default function SolveSession({
       const now = Date.now();
       if (now - lastCodeUpdateAtRef.current < 45000) return;
       lastCodeUpdateAtRef.current = now;
+      lastSentCodeRef.current = newCode;
       sendCodeUpdate(newCode);
     }, 10000);
   };
@@ -305,6 +307,12 @@ export default function SolveSession({
       try {
         await startSession(problemContext);
         setStarted(true);
+        // On resume, push the restored editor code so the coach actually sees
+        // what the developer wrote (otherwise it hallucinates about the code).
+        if (resuming && resumeState!.code && resumeState!.code.trim()) {
+          lastSentCodeRef.current = resumeState!.code;
+          sendCodeUpdate(resumeState!.code);
+        }
       } catch (error) {
         console.error("Failed to start session:", error);
         setMessages([{ role: "ai", text: "Voice session failed to start. Try again." }]);
@@ -509,6 +517,12 @@ export default function SolveSession({
     const userMsg = inputText.trim();
     setInputText("");
     setMessages(prev => [...prev, { role: "user", text: userMsg }]);
+    // Make sure the coach has the current editor code before answering a
+    // question about it (the debounced/cooldown'd update may not have fired).
+    if (code.trim() && code !== lastSentCodeRef.current) {
+      lastSentCodeRef.current = code;
+      sendCodeUpdate(code);
+    }
     sendText(userMsg);
   };
 
