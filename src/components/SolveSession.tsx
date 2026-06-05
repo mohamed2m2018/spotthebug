@@ -307,12 +307,9 @@ export default function SolveSession({
       try {
         await startSession(problemContext);
         setStarted(true);
-        // On resume, push the restored editor code so the coach actually sees
-        // what the developer wrote (otherwise it hallucinates about the code).
-        if (resuming && resumeState!.code && resumeState!.code.trim()) {
-          lastSentCodeRef.current = resumeState!.code;
-          sendCodeUpdate(resumeState!.code);
-        }
+        // Leave lastSentCodeRef empty so the developer's FIRST question after
+        // resume carries the current editor code (combined into one turn) — the
+        // coach then sees what they wrote without a separate, clipping turn.
       } catch (error) {
         console.error("Failed to start session:", error);
         setMessages([{ role: "ai", text: "Voice session failed to start. Try again." }]);
@@ -517,13 +514,14 @@ export default function SolveSession({
     const userMsg = inputText.trim();
     setInputText("");
     setMessages(prev => [...prev, { role: "user", text: userMsg }]);
-    // Make sure the coach has the current editor code before answering a
-    // question about it (the debounced/cooldown'd update may not have fired).
+    // Attach the current editor code IN THE SAME turn (not a separate message)
+    // so the coach sees it without a second turn that would clip its reply.
     if (code.trim() && code !== lastSentCodeRef.current) {
       lastSentCodeRef.current = code;
-      sendCodeUpdate(code);
+      sendText(`[CODE_UPDATE] My current code:\n\`\`\`\n${code}\n\`\`\`\n\nQuestion: ${userMsg}`);
+    } else {
+      sendText(userMsg);
     }
-    sendText(userMsg);
   };
 
   if (isLoading && !started) {
