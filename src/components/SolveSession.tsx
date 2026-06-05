@@ -295,22 +295,13 @@ export default function SolveSession({
       setCode(resuming ? (resumeState!.code || starter) : starter);
       setMessages(resuming ? resumeState!.messages : [{ role: "ai", text: "Session started! Let's learn this together." }]);
       const schemaNote = mode === "sql" ? `\n\n${SQL_SCHEMA_DESCRIPTION}` : "";
-      // Resume intro MUST stay small — a big first turn makes the model reply
-      // text-only (no audio). Keep recap tight + a 1-line table list (not the
-      // full schema) so the whole intro stays well under the audio threshold.
-      const recap = resuming
-        ? [...resumeState!.messages]
-            .filter(m => m.role === "ai")
-            .slice(-3)
-            .map(m => "• " + m.text.replace(/\[[A-Z_]+\]/g, "").trim().slice(0, 80))
-            .join("\n")
-        : "";
-      const tablesShort = mode === "sql" ? "\nTables: departments, employees, customers, products, orders." : "";
-      const problemContext = resuming
-        ? `RESUMING the lesson on **${conceptTopic}** — do NOT restart, re-introduce, or re-motivate. Already covered:\n${recap}\nIn ONE short Arabic sentence say where you stopped, then continue with the NEXT point only.${tablesShort}`
-        : mode === "sql"
-        ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\nFocused learning session on this single topic. Teach it from the ground up following the learner profile, using the practice tables above, then give the developer a query to write and Run against this database.`
-        : `Topic to teach: **${conceptTopic}**\n\nThis is a focused learning session on this single topic. Teach it from the ground up following the learner profile, then give the developer something to try.`;
+      // Resume uses the SAME prompt shape as a fresh start (which reliably gets
+      // audio) + a short "continuing" note. A recap block of prior dialogue here
+      // made the model reply text-only (no audio), so we don't include it.
+      const continuingNote = "This is a CONTINUING session — the developer already began this topic, so pick up where you left off and do NOT repeat the introduction.";
+      const problemContext = mode === "sql"
+        ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer a query to write and Run against this database.`
+        : `Topic to teach: **${conceptTopic}**\n\n${resuming ? continuingNote + " " : ""}Teach this topic following the learner profile, then give the developer something to try.`;
       try {
         await startSession(problemContext);
         setStarted(true);
