@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
 
       try {
         const body = await req.json();
-        const { skills = ["javascript"], difficulty = "beginner", topic } = body;
+        const { skills = [], difficulty = "beginner", topic, mode = "solve" } = body;
 
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
@@ -40,16 +40,52 @@ export async function POST(req: NextRequest) {
         }
 
         const ai = new GoogleGenAI({ apiKey });
-        const language = skills[Math.floor(Math.random() * skills.length)];
+        // Use the combined language/framework or let AI infer from topic
+        const language = skills.length > 0
+          ? skills.join(" using ")
+          : topic
+            ? "the most appropriate language for this topic"
+            : "JavaScript";
         const selectedTopic = topic || TOPICS[Math.floor(Math.random() * TOPICS.length)];
 
         // Phase 1: Generate with Google Search grounding
         send("progress", { message: "🔍 Searching for real coding challenges...", percentage: 15 });
         console.log(`[GenerateProblem] Phase 1: ${difficulty} ${language} (${selectedTopic})...`);
 
-        const phase1Response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: `You are a coding challenge creator. Generate a practical coding problem for a ${difficulty}-level developer using ${language}.
+        // Mode-specific generation brief. SQL and System-Design are teaching
+        // problems, not runnable code challenges.
+        const phase1Contents =
+          mode === "sql"
+            ? `You are a SQL interview-practice problem creator. Generate a realistic SQL problem for a ${difficulty}-level developer.
+
+Use Google Search to find real SQL interview questions related to "${selectedTopic}".
+
+Requirements:
+- Give one or more table schemas with column names/types and 3-6 sample rows each.
+- A clear question that the developer answers by writing a SQL query (or, for concept topics like indexing/isolation levels/deadlocks, a short conceptual question to reason about).
+- 2-3 examples: the input tables and the expected result set.
+- A correct reference SQL solution (or model answer for concept questions).
+- 3 progressive hints (vague → specific).
+- Starter code: a SQL comment placeholder, e.g. "-- Write your query here".
+- The "functionName" is not meaningful for SQL — set it to "query". Test cases may be an empty array.
+
+Write out all the details clearly.`
+            : mode === "sysdesign"
+            ? `You are a backend / system-design teaching-problem creator. Generate a concrete design brief for a ${difficulty}-level developer about "${selectedTopic}".
+
+Use Google Search to find how such systems/features are designed and the trade-offs involved.
+
+Requirements:
+- A concrete design BRIEF: a feature or system to design (e.g. "design a shoppable short-video feed with a product sidebar matched to each video"). State the functional requirements and scale assumptions (many users, large dataset).
+- Make clear the developer must (1) sketch the CLASSES / data model and (2) describe IN WORDS the key algorithm(s) and how it scales (e.g. the recommender / ranking).
+- 2-3 "examples": frame these as key requirements or constraints to satisfy.
+- A reference design OUTLINE as the reference solution (main classes, data stores, queues/caches, and the scaling approach) — this is a model answer, not runnable code.
+- 3 progressive hints guiding toward the design.
+- Starter code: a scratchpad template, e.g. "// Design scratchpad — sketch your classes, data model, and notes here".
+- "functionName" set to "design". Test cases may be an empty array.
+
+Write out all the details clearly.`
+            : `You are a coding challenge creator. Generate a practical coding problem for a ${difficulty}-level developer using ${language}.
 
 Use Google Search to find real interview questions and coding challenges related to "${selectedTopic}".
 
@@ -61,7 +97,11 @@ Requirements:
 - Include 2-3 test cases with expected output
 - Include starter code with function signature
 
-Write out all the details clearly.`,
+Write out all the details clearly.`;
+
+        const phase1Response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: phase1Contents,
           config: { tools: [{ googleSearch: {} }] },
         });
 

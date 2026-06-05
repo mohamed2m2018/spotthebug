@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { getLangfuseServer } from "@/lib/langfuse";
-import { HUNT_VOICE_SYSTEM_PROMPT, PAIR_VOICE_SYSTEM_PROMPT, SOLVE_VOICE_SYSTEM_PROMPT, buildGroundedInstruction } from "@/config/prompts";
+import { HUNT_VOICE_SYSTEM_PROMPT, PAIR_VOICE_SYSTEM_PROMPT, SOLVE_VOICE_SYSTEM_PROMPT, SQL_VOICE_SYSTEM_PROMPT, SYSDESIGN_VOICE_SYSTEM_PROMPT, buildGroundedInstruction } from "@/config/prompts";
 import type { ReviewFinding } from "@/config/prompts";
+import { VOICE_MODEL } from "@/config/voiceModel";
 
 const SYSTEM_PROMPTS: Record<string, string> = {
   hunt: HUNT_VOICE_SYSTEM_PROMPT,
   pair: PAIR_VOICE_SYSTEM_PROMPT,
   solve: SOLVE_VOICE_SYSTEM_PROMPT,
+  sql: SQL_VOICE_SYSTEM_PROMPT,
+  sysdesign: SYSDESIGN_VOICE_SYSTEM_PROMPT,
 };
 
 /**
@@ -37,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const mode = (["pair", "hunt", "solve"].includes(body.mode)) ? body.mode : "hunt";
+    const mode = (["pair", "hunt", "solve", "sql", "sysdesign"].includes(body.mode)) ? body.mode : "hunt";
 
     // Build system instruction: use grounded version if review data is provided
     let systemInstruction: string;
@@ -62,7 +65,7 @@ export async function POST(req: NextRequest) {
     });
     const span = trace.span({
       name: "gemini.authToken.create",
-      input: { mode, model: "gemini-2.5-flash-native-audio-preview-12-2025" },
+      input: { mode, model: VOICE_MODEL },
     });
 
     const client = new GoogleGenAI({ apiKey });
@@ -79,7 +82,7 @@ export async function POST(req: NextRequest) {
         expireTime,
         newSessionExpireTime,
         liveConnectConstraints: {
-          model: "gemini-2.5-flash-native-audio-preview-12-2025",
+          model: VOICE_MODEL,
           config: {
             responseModalities: [Modality.AUDIO],
             temperature: 0.7,

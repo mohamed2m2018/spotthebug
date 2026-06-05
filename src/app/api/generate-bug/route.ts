@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
 
       try {
         const body = await req.json();
-        const { skills = ["react"], difficulty = "beginner", excludeTopics = [] } = body;
+        const { skills = [], difficulty = "beginner", topic, excludeTopics = [] } = body;
 
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
@@ -33,7 +33,12 @@ export async function POST(req: NextRequest) {
         }
 
         const ai = new GoogleGenAI({ apiKey });
-        const framework = skills[Math.floor(Math.random() * skills.length)];
+        // Use the combined language/framework or let AI infer from topic
+        const framework = skills.length > 0
+          ? skills.join(" using ") // e.g. "Python using Django" or just "Python"
+          : topic
+            ? "the most appropriate language/framework for this topic"
+            : "JavaScript";
 
         // Phase 1: Generate bug with Google Search grounding (free text)
         send("progress", { message: "🔍 Searching for real bug patterns...", percentage: 15 });
@@ -46,6 +51,7 @@ export async function POST(req: NextRequest) {
 Use Google Search to find REAL, common bug patterns for ${framework}. Base your bug on actual patterns from Stack Overflow, GitHub issues, or official docs.
 
 ${excludeTopics.length > 0 ? `Avoid these topics (already used): ${excludeTopics.join(", ")}` : ""}
+${topic ? `IMPORTANT: Focus the bug specifically on this topic area: "${topic}". The bug must be related to ${topic}.` : ""}
 
 Requirements:
 - The buggy code should be 6-20 lines, focused on ONE bug

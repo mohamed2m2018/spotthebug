@@ -9,6 +9,7 @@ import { GoogleGenAI } from "@google/genai";
 import type { Session } from "@google/genai";
 import { useAudioPlayback } from "@/hooks/useAudioPlayback";
 import { buildHuntIntroPrompt, HUNT_INTRO_FALLBACK, HUNT_VOICE_SYSTEM_PROMPT } from "@/config/prompts";
+import { VOICE_MODEL_PATH, VOICE_NAME } from "@/config/voiceModel";
 import * as traceClient from "@/lib/traceClient";
 
 export interface VoiceTranscript {
@@ -58,6 +59,11 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const screenIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Set true on intentional stop so the SDK's onclose doesn't auto-reconnect.
+  const endedRef = useRef(false);
+  // Resets the reconnect budget once a reconnected session proves stable.
+  const stableTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -143,6 +149,8 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   // ── Stop Session ──
 
   const stopSession = useCallback(() => {
+    endedRef.current = true; // must be set before close() so onclose skips reconnect
+    if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     stopPageCapture();
     processorRef.current?.disconnect();
     processorRef.current = null;
@@ -150,6 +158,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
     streamRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
+    try { sessionRef.current?.close(); } catch { /* already closed */ }
     sessionRef.current = null;
     setIsConnected(false);
     setIsRecording(false);
@@ -188,6 +197,8 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
         console.error("[Hunt] Failed to get session summary:", err);
         setPostSessionReport({ error: err.message || "Failed to generate summary" });
       });
+    } else {
+      setPostSessionReport({ error: "No conversation or audio was recorded to analyze." });
     }
   }, [flushAudioQueue]);
 
@@ -232,8 +243,10 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   const startSession = async (bugContext?: string) => {
     // Clean up any existing connection first
     if (sessionRef.current) {
+      try { sessionRef.current.close(); } catch { /* already closed */ }
       sessionRef.current = null;
     }
+    endedRef.current = false;
     setPostSessionReport(null);
     fullTranscriptRef.current = "";
 
@@ -308,14 +321,14 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
       const sessionReady = new Promise<Session>((r) => { resolveSession = r; });
 
       const session = await ai.live.connect({
-        model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+        model: VOICE_MODEL_PATH,
         config: {
           responseModalities: ["AUDIO"] as any,
           systemInstruction: HUNT_VOICE_SYSTEM_PROMPT,
           tools: [{ googleSearch: {} }],
           outputAudioTranscription: {},
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
           } as any,
           sessionResumption: {},
           contextWindowCompression: {
@@ -399,6 +412,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
           onclose: () => {
              console.log("[Hunt] SDK Session closed (server-initiated)");
              traceClient.traceEvent(traceSessionIdRef.current, 'ws.close');
+             if (endedRef.current) return; // intentional stop — don't reconnect
              attemptReconnect();
           }
         }
@@ -418,6 +432,8 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
   // ── Auto-Reconnect ──
 
   const attemptReconnect = async () => {
+    if (endedRef.current) return; // session was intentionally stopped
+    if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     reconnectCountRef.current++;
     const attempt = reconnectCountRef.current;
 
@@ -451,14 +467,14 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
       });
 
       const newSession = await ai.live.connect({
-        model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+        model: VOICE_MODEL_PATH,
         config: {
           responseModalities: ["AUDIO"] as any,
           systemInstruction: HUNT_VOICE_SYSTEM_PROMPT,
           tools: [{ googleSearch: {} }],
           outputAudioTranscription: {},
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
           } as any,
           sessionResumption: { handle },
           contextWindowCompression: {
@@ -472,6 +488,9 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { attempt } });
             setIsReconnecting(false);
             setIsConnected(true);
+            // Renew the reconnect budget only after the link stays up a while,
+            // so a flapping server still hits MAX_RECONNECTS instead of looping.
+            stableTimerRef.current = setTimeout(() => { reconnectCountRef.current = 0; }, 30_000);
             optionsRef.current.onReconnected?.();
           },
           onmessage: async (response: any) => {
@@ -513,6 +532,7 @@ export function useHuntVoice(options: UseHuntVoiceOptions = {}): UseHuntVoiceRet
           },
           onclose: () => {
             console.log(`[Hunt] SDK Session closed again (server-initiated)`);
+            if (endedRef.current) return; // intentional stop — don't reconnect
             attemptReconnect();
           }
         }

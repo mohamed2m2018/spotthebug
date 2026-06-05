@@ -6,24 +6,26 @@ import { useRouter } from "next/navigation";
 import HuntSession from "@/components/HuntSession";
 import PairSession from "@/components/PairSession";
 import SolveSession from "@/components/SolveSession";
+import { PREDEFINED_PROBLEMS, PROBLEM_CATEGORIES, getProblemById, type PredefinedProblem } from "@/config/problems";
+import { MODE_SYLLABI, DSA_SYLLABUS, type ModeSyllabus } from "@/config/syllabi";
+import CoverageOverview from "@/components/CoverageOverview";
+import { getCovered } from "@/lib/coverage";
 
 import styles from "./session.module.css";
 
-const AVAILABLE_SKILLS = ["React", "Node.js", "TypeScript", "Python"];
-const SOLVE_LANGUAGES = ["JavaScript", "Python", "Java", "Go", "Rust", "C++"];
 const DIFFICULTY_LEVELS = [
   { value: "beginner", label: "🟢 Beginner" },
   { value: "intermediate", label: "🟡 Intermediate" },
   { value: "advanced", label: "🔴 Advanced" },
 ];
 
-const PROBLEM_TOPICS = [
-  "Arrays & Strings", "Objects & Maps", "Async/Await",
-  "Recursion", "Algorithms", "Error Handling",
-  "API Design", "Functional Programming",
-];
+type SessionMode = "hunt" | "pair" | "solve" | "sql" | "sysdesign";
 
-type SessionMode = "hunt" | "pair" | "solve";
+interface SyllabusData {
+  syllabus: string[];
+  source: string;
+  description: string;
+}
 
 export default function SessionPage() {
   const { status } = useSession();
@@ -31,17 +33,108 @@ export default function SessionPage() {
 
   const [phase, setPhase] = useState<"select" | "setup" | "active">("select");
   const [mode, setMode] = useState<SessionMode | null>(null);
-  const [selectedSkills, setSelectedSkills] = useState<string[]>(["React"]);
   const [selectedDifficulty, setSelectedDifficulty] = useState("beginner");
   const [selectedTopic, setSelectedTopic] = useState<string | undefined>(undefined);
+  const [selectedLanguage, setSelectedLanguage] = useState("");
+  const [selectedFramework, setSelectedFramework] = useState("");
 
+  // Syllabus state
+  const [syllabusData, setSyllabusData] = useState<SyllabusData | null>(null);
+  const [syllabusIndex, setSyllabusIndex] = useState(0);
+  const [isSyllabusLoading, setIsSyllabusLoading] = useState(false);
+  const [syllabusError, setSyllabusError] = useState<string | null>(null);
 
+  // Predefined problem selection (solve mode)
+  const [selectedProblemId, setSelectedProblemId] = useState<string | null>(null);
+  const [showProblemPicker, setShowProblemPicker] = useState(false);
+
+  // Coverage track for curated crash-course modes (null = no tracking)
+  const [trackId, setTrackId] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/login");
   }, [status, router]);
 
   if (status === "loading") return null;
+
+  // ── Helpers ──
+  const resetSyllabus = () => {
+    setSyllabusData(null);
+    setSyllabusIndex(0);
+    setSyllabusError(null);
+  };
+
+  const resetSetup = () => {
+    setSelectedTopic(undefined);
+    setSelectedLanguage("");
+    setSelectedFramework("");
+    setSelectedProblemId(null);
+    setShowProblemPicker(false);
+    setTrackId(null);
+    resetSyllabus();
+  };
+
+  const handleStartClick = (modeType: "hunt" | "solve") => {
+    // Always auto-generate syllabus if they haven't manually generated one
+    if (!syllabusData) {
+      handleGenerateSyllabus(modeType);
+    } else {
+      setPhase("active");
+    }
+  };
+
+  const handleGenerateSyllabus = async (currentMode: SessionMode) => {
+    const effectiveTopic = selectedTopic?.trim() || selectedFramework?.trim() || selectedLanguage?.trim();
+    if (!effectiveTopic) return;
+    setIsSyllabusLoading(true);
+    setSyllabusError(null);
+    setSyllabusData(null);
+    try {
+      const res = await fetch("/api/generate-syllabus", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: effectiveTopic,
+          mode: currentMode,
+          difficulty: selectedDifficulty,
+          framework: [selectedLanguage, selectedFramework].filter(Boolean).join(" using "),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Failed");
+      setSyllabusData(data);
+      setSyllabusIndex(0);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to generate syllabus";
+      setSyllabusError(msg);
+    } finally {
+      setIsSyllabusLoading(false);
+    }
+  };
+
+  const handleAdvanceSyllabus = () => {
+    setSyllabusIndex(prev => prev + 1);
+  };
+
+  // Crash-course modes launch straight into a curated, interview-crucial
+  // syllabus — no setup form. Each topic generates a teaching problem and the
+  // coach teaches the full depth around it.
+  const startCuratedMode = (m: SessionMode, s: ModeSyllabus, tid: string) => {
+    setMode(m);
+    resetSetup();
+    setTrackId(tid);
+    setSyllabusData({ syllabus: s.syllabus, source: s.source, description: s.description });
+    setSyllabusIndex(0);
+    setPhase("setup"); // show topic picker first
+  };
+
+  // Current topic: syllabus item if active, otherwise free-text topic
+  const activeTopic = syllabusData
+    ? syllabusData.syllabus[syllabusIndex]
+    : selectedTopic;
+
+  // Skills array for API compatibility — built from language/framework inputs
+  const activeSkills = [selectedLanguage, selectedFramework].filter(Boolean);
 
   // ── Mode Selection ──
   if (phase === "select") {
@@ -61,7 +154,7 @@ export default function SessionPage() {
             </button>
             <button
               className={styles.modeCard}
-              onClick={() => { setMode("solve"); setSelectedSkills([]); setPhase("setup"); }}
+              onClick={() => { setMode("solve"); resetSetup(); setPhase("setup"); }}
             >
               <span className={styles.modeIcon}>🧩</span>
               <span className={styles.modeLabel}>Problem Solve</span>
@@ -69,37 +162,146 @@ export default function SessionPage() {
             </button>
             <button
               className={styles.modeCard}
-              onClick={() => { setMode("hunt"); setPhase("setup"); }}
+              onClick={() => { setMode("solve"); resetSetup(); setSelectedProblemId(null); setShowProblemPicker(true); setPhase("setup"); }}
+            >
+              <span className={styles.modeIcon}>📋</span>
+              <span className={styles.modeLabel}>LeetCode Curate</span>
+              <span className={styles.modeDesc}>Practice 20 curated LeetCode problems with a voice coach</span>
+            </button>
+            <button
+              className={styles.modeCard}
+              onClick={() => { setMode("hunt"); resetSetup(); setPhase("setup"); }}
             >
               <span className={styles.modeIcon}>🔍</span>
               <span className={styles.modeLabel}>Bug Hunt</span>
               <span className={styles.modeDesc}>Find bugs in the built-in code editor with AI voice coaching</span>
             </button>
+            <button
+              className={styles.modeCard}
+              onClick={() => startCuratedMode("solve", DSA_SYLLABUS, "dsa")}
+            >
+              <span className={styles.modeIcon}>🧠</span>
+              <span className={styles.modeLabel}>DSA Crash Course</span>
+              <span className={styles.modeDesc}>Every core problem-solving pattern, one problem each — the coach teaches the full depth (cue, variations, complexity, follow-ups)</span>
+            </button>
+            <button
+              className={styles.modeCard}
+              onClick={() => startCuratedMode("sql", MODE_SYLLABI.sql, "sql")}
+            >
+              <span className={styles.modeIcon}>🗄️</span>
+              <span className={styles.modeLabel}>SQL &amp; Databases</span>
+              <span className={styles.modeDesc}>Learn queries, design & concepts (joins, windows, indexing, transactions, concurrency) through a curated interview syllabus</span>
+            </button>
+            <button
+              className={styles.modeCard}
+              onClick={() => startCuratedMode("sysdesign", MODE_SYLLABI.sysdesign, "sysdesign")}
+            >
+              <span className={styles.modeIcon}>🏗️</span>
+              <span className={styles.modeLabel}>Backend &amp; System Design</span>
+              <span className={styles.modeDesc}>Learn backend concepts through design problems — Kafka, Redis, concurrency, memory leaks, sharding, OOD & recommenders at scale</span>
+            </button>
           </div>
-
+          <CoverageOverview />
         </div>
       </div>
     );
   }
 
-  // ── Hunt Setup (skills + difficulty) ──
-  if (phase === "setup" && mode === "hunt") {
+  // ── Shared Setup UI (used by both Hunt and Solve) ──
+  const renderSetupForm = (modeType: "hunt" | "solve") => {
+    const hasTopic = !!selectedTopic?.trim();
+    const canStart = hasTopic || selectedLanguage.trim() || selectedFramework.trim();
+    const title = modeType === "hunt" ? "🔍 Bug Hunt Setup" : "🧩 Problem Setup";
+    const startLabel = isSyllabusLoading 
+      ? "⏳ Generating Syllabus…" 
+      : modeType === "hunt" ? "📚 Start Hunt" : "📚 Start Challenge";
+
     return (
       <div className={styles.setupScreen}>
         <div className={styles.setupCard}>
-          <h1 className={styles.setupTitle}>🔍 Bug Hunt Setup</h1>
-          <p className={styles.setupSubtitle}>Select frameworks</p>
-          <div className={styles.skillsGrid}>
-            {AVAILABLE_SKILLS.map((skill) => (
-              <button
-                key={skill}
-                className={`${styles.skillChip} ${selectedSkills.includes(skill) ? styles.skillChipActive : ""}`}
-                onClick={() => setSelectedSkills(prev => prev.includes(skill) ? prev.filter(s => s !== skill) : [...prev, skill])}
-              >
-                {skill}
-              </button>
-            ))}
+          <h1 className={styles.setupTitle}>{title}</h1>
+
+          {/* Topic — primary input */}
+          <p className={styles.setupSubtitle}>What do you want to practice?</p>
+          <div className={styles.topicInputWrapper}>
+            <input
+              type="text"
+              className={styles.topicInput}
+              placeholder="e.g. React Hooks, Binary Trees, SQL Joins…"
+              value={selectedTopic || ""}
+              onChange={(e) => { setSelectedTopic(e.target.value || undefined); resetSyllabus(); }}
+              autoFocus
+            />
+            <button
+              className={styles.syllabusBtn}
+              onClick={() => handleGenerateSyllabus(modeType)}
+              disabled={!canStart || isSyllabusLoading}
+              title="Generate a structured syllabus based on real books/courses"
+            >
+              {isSyllabusLoading ? "⏳ Generating…" : "📚 Syllabus"}
+            </button>
           </div>
+
+          {modeType === "solve" && (
+            <button
+              onClick={() => { setShowProblemPicker(true); }}
+              style={{
+                width: "100%", marginTop: "0.75rem", padding: "0.75rem",
+                borderRadius: "10px", border: "1px dashed rgba(139,92,246,0.4)",
+                background: "rgba(139,92,246,0.06)", color: "#a78bfa",
+                fontSize: "0.9rem", fontWeight: 600, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+              }}
+            >
+              📋 Or pick from 20 LeetCode problems →
+            </button>
+          )}
+
+          {syllabusError && <p className={styles.validationHint}>⚠ {syllabusError}</p>}
+
+          {syllabusData && (
+            <div className={styles.syllabusList}>
+              <div className={styles.syllabusHeader}>
+                <span className={styles.syllabusTitle}>📚 Syllabus</span>
+                <span className={styles.syllabusSource}>Based on: {syllabusData.source}</span>
+              </div>
+              <p className={styles.syllabusDescription}>{syllabusData.description}</p>
+              <ol className={styles.syllabusItems}>
+                {syllabusData.syllabus.map((item, i) => (
+                  <li key={i} className={`${styles.syllabusItem} ${i === 0 ? styles.syllabusItemActive : ""}`}>
+                    <span className={styles.syllabusItemNum}>{i + 1}</span>
+                    <span className={styles.syllabusItemText}>{item}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* Language & Framework — secondary inputs */}
+          <div className={styles.optionalRow}>
+            <div className={styles.optionalField}>
+              <label className={styles.optionalLabel}>Language (optional)</label>
+              <input
+                type="text"
+                className={styles.optionalInput}
+                placeholder="e.g. Python, Go, TypeScript…"
+                value={selectedLanguage}
+                onChange={(e) => setSelectedLanguage(e.target.value)}
+              />
+            </div>
+            <div className={styles.optionalField}>
+              <label className={styles.optionalLabel}>Framework (optional)</label>
+              <input
+                type="text"
+                className={styles.optionalInput}
+                placeholder="e.g. React, Django, Spring…"
+                value={selectedFramework}
+                onChange={(e) => setSelectedFramework(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Difficulty */}
           <p className={styles.setupSubtitle}>Your level</p>
           <div className={styles.skillsGrid}>
             {DIFFICULTY_LEVELS.map((level) => (
@@ -112,30 +314,177 @@ export default function SessionPage() {
               </button>
             ))}
           </div>
-          {selectedSkills.length === 0 && (
-            <p className={styles.validationHint}>⚠ Select at least one framework to continue</p>
-          )}
+
           <div className={styles.setupActions}>
             <button className={styles.backBtn} onClick={() => setPhase("select")}>← Back</button>
             <button
               className={`${styles.startBtn} btn btn-primary`}
-              onClick={() => setPhase("active")}
-              disabled={selectedSkills.length === 0}
+              onClick={() => handleStartClick(modeType)}
+              disabled={!canStart || isSyllabusLoading}
             >
-              🎙️ Start Hunt
+              {startLabel}
             </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Curated crash-course topic picker (DSA / SQL / Backend) ──
+  if (phase === "setup" && trackId && syllabusData) {
+    const covered = getCovered(trackId);
+    const titleMap: Record<string, string> = {
+      dsa: "🧠 DSA Crash Course",
+      sql: "🗄️ SQL & Databases",
+      sysdesign: "🏗️ Backend & System Design",
+    };
+    return (
+      <div className={styles.setupScreen}>
+        <div className={styles.setupCard}>
+          <h1 className={styles.setupTitle}>{titleMap[trackId] || "Pick a Topic"}</h1>
+          <p className={styles.setupSubtitle}>
+            Pick a topic to start — {covered.length}/{syllabusData.syllabus.length} done. (It auto-advances from here.)
+          </p>
+          <ol style={{ listStyle: "none", padding: 0, margin: "0 0 1rem 0", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {syllabusData.syllabus.map((item, i) => {
+              const done = covered.includes(item);
+              return (
+                <li key={i}>
+                  <button
+                    onClick={() => { setSyllabusIndex(i); setPhase("active"); }}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: "0.6rem",
+                      padding: "0.6rem 0.8rem", borderRadius: "8px",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      background: done ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.03)",
+                      color: "#e2e8f0", fontSize: "0.85rem", cursor: "pointer", textAlign: "left",
+                    }}
+                  >
+                    <span style={{ color: done ? "#22c55e" : "#64748b", fontVariantNumeric: "tabular-nums", minWidth: "1.4rem" }}>
+                      {done ? "✅" : `${i + 1}.`}
+                    </span>
+                    <span>{item}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+          <div className={styles.setupActions}>
+            <button className={styles.backBtn} onClick={() => { setPhase("select"); setMode(null); setTrackId(null); }}>← Back</button>
           </div>
         </div>
       </div>
     );
   }
 
+  // ── Hunt Setup ──
+  if (phase === "setup" && mode === "hunt") return renderSetupForm("hunt");
+
+  // ── Solve Setup with Problem Picker ──
+  if (phase === "setup" && mode === "solve") {
+    if (showProblemPicker) {
+      const canStartPicker = !!selectedProblemId;
+      return (
+        <div className={styles.setupScreen}>
+          <div className={styles.setupCard}>
+            <h1 className={styles.setupTitle}>🧩 Pick a Problem</h1>
+            <p className={styles.setupSubtitle}>Choose from 20 curated LeetCode problems</p>
+
+            {PROBLEM_CATEGORIES.map((dayGroup) => (
+              <div key={dayGroup.day} style={{ marginBottom: "1.5rem" }}>
+                <h3 style={{ color: "#a78bfa", fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.5rem", letterSpacing: "0.05em" }}>
+                  {dayGroup.label}
+                </h3>
+                {dayGroup.categories.map((cat) => (
+                  <div key={cat.name} style={{ marginBottom: "0.75rem" }}>
+                    <div style={{ color: "#94a3b8", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.35rem" }}>
+                      {cat.name}
+                    </div>
+                    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                      {cat.problemIds.map((pid) => {
+                        const prob = getProblemById(pid)!;
+                        const isSelected = selectedProblemId === pid;
+                        const diffColor = prob.difficulty === "beginner" ? "#22c55e" : prob.difficulty === "intermediate" ? "#eab308" : "#ef4444";
+                        return (
+                          <button
+                            key={pid}
+                            onClick={() => setSelectedProblemId(pid)}
+                            style={{
+                              display: "flex", alignItems: "center", gap: "0.4rem",
+                              padding: "0.4rem 0.7rem", borderRadius: "8px",
+                              border: isSelected ? "2px solid #8b5cf6" : "1px solid rgba(255,255,255,0.1)",
+                              background: isSelected ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.03)",
+                              cursor: "pointer", transition: "all 0.15s ease",
+                              color: isSelected ? "#c4b5fd" : "#cbd5e1",
+                            }}
+                          >
+                            <span style={{
+                              width: "6px", height: "6px", borderRadius: "50%",
+                              background: diffColor, flexShrink: 0,
+                            }} />
+                            <span style={{ fontSize: "0.82rem", fontWeight: isSelected ? 600 : 400 }}>
+                              {prob.leetcodeNumber}. {prob.title}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+
+            {selectedProblemId && (() => {
+              const prob = getProblemById(selectedProblemId)!;
+              return (
+                <div style={{
+                  background: "rgba(139,92,246,0.06)", border: "1px solid rgba(139,92,246,0.2)",
+                  borderRadius: "10px", padding: "1rem", marginTop: "0.5rem", marginBottom: "1rem",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                    <span style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem", borderRadius: "4px",
+                      background: prob.difficulty === "beginner" ? "rgba(34,197,94,0.15)" : prob.difficulty === "intermediate" ? "rgba(234,179,8,0.15)" : "rgba(239,68,68,0.15)",
+                      color: prob.difficulty === "beginner" ? "#22c55e" : prob.difficulty === "intermediate" ? "#eab308" : "#ef4444",
+                      fontWeight: 600, textTransform: "capitalize" }}>
+                      {prob.difficulty}
+                    </span>
+                    <span style={{ fontSize: "0.75rem", color: "#94a3b8" }}>{prob.category}</span>
+                  </div>
+                  <p style={{ fontSize: "0.85rem", color: "#e2e8f0", lineHeight: 1.5 }}>
+                    {prob.description.slice(0, 180)}{prob.description.length > 180 ? "…" : ""}
+                  </p>
+                </div>
+              );
+            })()}
+
+            <div className={styles.setupActions}>
+              <button className={styles.backBtn} onClick={() => setShowProblemPicker(false)}>← Custom Topic</button>
+              <button
+                className={`${styles.startBtn} btn btn-primary`}
+                onClick={() => setPhase("active")}
+                disabled={!canStartPicker}
+              >
+                🚀 Start Problem
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return renderSetupForm("solve");
+  }
+
   // ── Active Sessions ──
   if (phase === "active" && mode === "hunt") {
     return (
       <HuntSession
-        skills={selectedSkills}
+        skills={activeSkills}
         difficulty={selectedDifficulty}
+        topic={activeTopic}
+        syllabus={syllabusData?.syllabus}
+        syllabusIndex={syllabusData ? syllabusIndex : undefined}
+        syllabusSource={syllabusData?.source}
+        onAdvanceSyllabus={syllabusData ? handleAdvanceSyllabus : undefined}
         onEnd={() => { setPhase("select"); setMode(null); }}
       />
     );
@@ -149,73 +498,38 @@ export default function SessionPage() {
     );
   }
 
-  // ── Solve Setup ──
-  if (phase === "setup" && mode === "solve") {
+  if (phase === "active" && mode === "solve") {
+    const predefinedProblem = selectedProblemId ? getProblemById(selectedProblemId) : undefined;
     return (
-      <div className={styles.setupScreen}>
-        <div className={styles.setupCard}>
-          <h1 className={styles.setupTitle}>🧩 Problem Setup</h1>
-          <p className={styles.setupSubtitle}>Select language</p>
-          <div className={styles.skillsGrid}>
-            {SOLVE_LANGUAGES.map((lang) => (
-              <button
-                key={lang}
-                className={`${styles.skillChip} ${selectedSkills.includes(lang) ? styles.skillChipActive : ""}`}
-                onClick={() => setSelectedSkills(prev => prev.includes(lang) ? prev.filter(s => s !== lang) : [...prev, lang])}
-              >
-                {lang}
-              </button>
-            ))}
-          </div>
-          <p className={styles.setupSubtitle}>Your level</p>
-          <div className={styles.skillsGrid}>
-            {DIFFICULTY_LEVELS.map((level) => (
-              <button
-                key={level.value}
-                className={`${styles.skillChip} ${selectedDifficulty === level.value ? styles.skillChipActive : ""}`}
-                onClick={() => setSelectedDifficulty(level.value)}
-              >
-                {level.label}
-              </button>
-            ))}
-          </div>
-          <p className={styles.setupSubtitle}>Topic (optional)</p>
-          <div className={styles.skillsGrid}>
-            {PROBLEM_TOPICS.map((t) => (
-              <button
-                key={t}
-                className={`${styles.skillChip} ${selectedTopic === t ? styles.skillChipActive : ""}`}
-                onClick={() => setSelectedTopic(prev => prev === t ? undefined : t)}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-          {selectedSkills.length === 0 && (
-            <p className={styles.validationHint}>⚠ Select at least one language to continue</p>
-          )}
-          <div className={styles.setupActions}>
-            <button className={styles.backBtn} onClick={() => setPhase("select")}>← Back</button>
-            <button
-              className={`${styles.startBtn} btn btn-primary`}
-              onClick={() => setPhase("active")}
-              disabled={selectedSkills.length === 0}
-            >
-              🧩 Start Challenge
-            </button>
-          </div>
-        </div>
-      </div>
+      <SolveSession
+        skills={activeSkills}
+        difficulty={selectedDifficulty}
+        topic={activeTopic}
+        syllabus={syllabusData?.syllabus}
+        syllabusIndex={syllabusData ? syllabusIndex : undefined}
+        syllabusSource={syllabusData?.source}
+        onAdvanceSyllabus={syllabusData ? handleAdvanceSyllabus : undefined}
+        onEnd={() => { setPhase("select"); setMode(null); }}
+        predefinedProblem={predefinedProblem}
+        trackId={trackId ?? undefined}
+      />
     );
   }
 
-  if (phase === "active" && mode === "solve") {
+  // SQL & Backend/System-Design teaching modes (reuse SolveSession, no code execution)
+  if (phase === "active" && (mode === "sql" || mode === "sysdesign")) {
     return (
       <SolveSession
-        skills={selectedSkills}
+        mode={mode}
+        skills={activeSkills}
         difficulty={selectedDifficulty}
-        topic={selectedTopic}
+        topic={activeTopic}
+        syllabus={syllabusData?.syllabus}
+        syllabusIndex={syllabusData ? syllabusIndex : undefined}
+        syllabusSource={syllabusData?.source}
+        onAdvanceSyllabus={syllabusData ? handleAdvanceSyllabus : undefined}
         onEnd={() => { setPhase("select"); setMode(null); }}
+        trackId={trackId ?? undefined}
       />
     );
   }

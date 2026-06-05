@@ -13,6 +13,7 @@ import { useAudioPlayback } from "@/hooks/useAudioPlayback";
 import { buildGroundedInstruction, PAIR_GREETING_PROMPT, PAIR_VOICE_SYSTEM_PROMPT } from "@/config/prompts";
 import type { ReviewFinding } from "@/config/prompts";
 import { readFileFromHandle } from "@/utils/workspaceReader";
+import { VOICE_MODEL_PATH, VOICE_NAME } from "@/config/voiceModel";
 import * as traceClient from "@/lib/traceClient";
 
 export interface VoiceTranscript {
@@ -75,6 +76,11 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   const screenIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const firstFrameSentRef = useRef(false);
   const onFirstFrameRef = useRef<(() => void) | null>(null);
+
+  // Set true on intentional stop so the SDK's onclose doesn't auto-reconnect.
+  const endedRef = useRef(false);
+  // Resets the reconnect budget once a reconnected session proves stable.
+  const stableTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -204,6 +210,8 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   // ── Stop Session ──
 
   const stopSession = useCallback(() => {
+    endedRef.current = true; // must be set before close() so onclose skips reconnect
+    if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     stopScreenShare();
     processorRef.current?.disconnect();
     processorRef.current = null;
@@ -211,8 +219,9 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
     streamRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
-    
-    // Close SDK session
+
+    // Close SDK session (explicitly — leaving the WebSocket open leaks it)
+    try { sessionRef.current?.close(); } catch { /* already closed */ }
     sessionRef.current = null;
     setIsConnected(false);
     setIsRecording(false);
@@ -265,8 +274,10 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   const startSession = async (context?: PairSessionContext) => {
     // Clean up any existing connection first
     if (sessionRef.current) {
+      try { sessionRef.current.close(); } catch { /* already closed */ }
       sessionRef.current = null;
     }
+    endedRef.current = false;
 
     try {
       // Use pre-fetched token if available (overlapped with screen share dialog),
@@ -399,11 +410,11 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
       let sessionMessageCount = 0;
       
       const session = await ai.live.connect({
-        model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+        model: VOICE_MODEL_PATH,
         config: {
           responseModalities: ["AUDIO"] as any,
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
           } as any,
           systemInstruction: {
             parts: [{ text: systemInstruction }]
@@ -584,6 +595,7 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
            onclose: () => {
               console.log(`[Pair] SDK Session closed (server-initiated)`);
               traceClient.traceEvent(traceSessionIdRef.current, 'ws.close', { metadata: { source: "sdk" } });
+              if (endedRef.current) return; // intentional stop — don't reconnect
               // Attempt reconnect instead of killing the session
               attemptReconnect();
            }
@@ -603,6 +615,8 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
   // ── Auto-Reconnect ──
 
   const attemptReconnect = async () => {
+    if (endedRef.current) return; // session was intentionally stopped
+    if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     reconnectCountRef.current++;
     const attempt = reconnectCountRef.current;
 
@@ -673,11 +687,11 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
       }
 
       const newSession = await ai.live.connect({
-        model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+        model: VOICE_MODEL_PATH,
         config: {
           responseModalities: ["AUDIO"] as any,
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
           } as any,
           systemInstruction: { parts: [{ text: systemInstruction }] },
           tools: toolDeclarations.length > 0 ? toolDeclarations : undefined,
@@ -695,6 +709,9 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { attempt } });
             setIsReconnecting(false);
             setIsConnected(true);
+            // Renew the reconnect budget only after the link stays up a while,
+            // so a flapping server still hits MAX_RECONNECTS instead of looping.
+            stableTimerRef.current = setTimeout(() => { reconnectCountRef.current = 0; }, 30_000);
             optionsRef.current.onReconnected?.();
           },
           // Reuse the same message handler — it's the same for reconnects
@@ -763,6 +780,7 @@ export function usePairVoice(options: UsePairVoiceOptions = {}): UsePairVoiceRet
           onclose: () => {
             console.log(`[Pair] SDK Session closed again (server-initiated)`);
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.close', { metadata: { source: "sdk", reconnectAttempt: attempt } });
+            if (endedRef.current) return; // intentional stop — don't reconnect
             attemptReconnect();
           }
         }

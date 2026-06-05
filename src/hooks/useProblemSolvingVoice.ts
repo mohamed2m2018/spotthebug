@@ -8,8 +8,17 @@ import {
 import { GoogleGenAI } from "@google/genai";
 import type { Session } from "@google/genai";
 import { useAudioPlayback } from "@/hooks/useAudioPlayback";
-import { buildSolveIntroPrompt, SOLVE_INTRO_FALLBACK } from "@/config/prompts";
+import { buildSolveIntroPrompt, buildSqlIntroPrompt, buildSysdesignIntroPrompt, SOLVE_INTRO_FALLBACK, SOLVE_VOICE_SYSTEM_PROMPT } from "@/config/prompts";
+import { VOICE_MODEL_PATH, VOICE_NAME } from "@/config/voiceModel";
 import * as traceClient from "@/lib/traceClient";
+
+export type SolveMode = "solve" | "sql" | "sysdesign";
+
+const INTRO_BUILDERS: Record<SolveMode, (ctx: string) => string> = {
+  solve: buildSolveIntroPrompt,
+  sql: buildSqlIntroPrompt,
+  sysdesign: buildSysdesignIntroPrompt,
+};
 
 export interface VoiceTranscript {
   role: "user" | "ai";
@@ -17,6 +26,8 @@ export interface VoiceTranscript {
 }
 
 interface UseProblemSolvingVoiceOptions {
+  /** Which teaching mode this session runs. Drives the system prompt + intro. Default "solve". */
+  mode?: SolveMode;
   onTranscript?: (t: VoiceTranscript) => void;
   onProblemSolved?: () => void;
   onReconnecting?: () => void;
@@ -48,9 +59,18 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
+  // Mode is stable for a session; keep in a ref so reconnect closures see it.
+  const modeRef = useRef<SolveMode>(options.mode ?? "solve");
+  modeRef.current = options.mode ?? "solve";
+
   const sessionRef = useRef<Session | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
+
+  // Set true on intentional stop so the SDK's onclose doesn't auto-reconnect.
+  const endedRef = useRef(false);
+  // Resets the reconnect budget once a reconnected session proves stable.
+  const stableTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     playAudioChunk, flushAudioQueue, clearCompletedSources,
@@ -68,6 +88,28 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
   // ── AI Mute (pause AI audio output) ──
   const aiMutedRef = useRef(false);
+
+  // ── Spoken-audio fallback (browser TTS) ──
+  // Gemini native audio arrives reliably server-side but NOT through the browser
+  // web SDK (only the transcript text comes). When a turn completes with no
+  // native audio chunks, speak the transcript via the browser's speech engine so
+  // the learner always hears the coach.
+  const nativeAudioThisTurnRef = useRef(false);
+  const turnTextRef = useRef("");
+  const speakFallback = useCallback((text: string) => {
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      const clean = text.replace(/\[[A-Z_]+\]/g, "").trim();
+      if (!clean) return;
+      const u = new SpeechSynthesisUtterance(clean);
+      u.lang = "ar";
+      u.rate = 0.9;
+      const arVoice = synth.getVoices().find((v) => v.lang?.toLowerCase().startsWith("ar"));
+      if (arVoice) u.voice = arVoice;
+      synth.speak(u);
+    } catch { /* TTS unavailable */ }
+  }, []);
 
   // ── Text / Code Sending ──
 
@@ -89,16 +131,20 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   // ── Stop Session ──
 
   const stopSession = useCallback(() => {
+    endedRef.current = true; // must be set before close() so onclose skips reconnect
+    if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     processorRef.current?.disconnect();
     processorRef.current = null;
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
+    try { sessionRef.current?.close(); } catch { /* already closed */ }
     sessionRef.current = null;
     setIsConnected(false);
     setIsRecording(false);
     flushAudioQueue();
+    try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
 
     if (traceSessionIdRef.current) {
       traceClient.endTrace(traceSessionIdRef.current);
@@ -137,6 +183,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     setIsAiMuted(next);
     if (next) {
       flushAudioQueue();
+      try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
       console.log("[Solve] ⏸️ AI audio paused");
     } else {
       console.log("[Solve] ▶️ AI audio resumed");
@@ -147,13 +194,15 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
   const startSession = async (problemContext?: string) => {
     if (sessionRef.current) {
+      try { sessionRef.current.close(); } catch { /* already closed */ }
       sessionRef.current = null;
     }
+    endedRef.current = false;
     fullTranscriptRef.current = "";
 
     try {
-      const ephemeralToken = await fetchVoiceToken("solve");
-      
+      const ephemeralToken = await fetchVoiceToken(modeRef.current);
+
       const ai = new GoogleGenAI({
         apiKey: ephemeralToken,
         httpOptions: { apiVersion: 'v1alpha' },
@@ -161,7 +210,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
       // ── Start session trace ──
       traceSessionIdRef.current = traceClient.generateSessionId();
-      traceClient.startTrace(traceSessionIdRef.current, "solve", {
+      traceClient.startTrace(traceSessionIdRef.current, modeRef.current, {
         hasProblemContext: !!problemContext,
       });
 
@@ -200,7 +249,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
           // Send problem context — use liveSession directly (ref not set yet)
           const introText = problemContext
-            ? buildSolveIntroPrompt(problemContext)
+            ? INTRO_BUILDERS[modeRef.current](problemContext)
             : SOLVE_INTRO_FALLBACK;
 
           console.log('[Solve] 📝 Sending intro context to session');
@@ -220,13 +269,14 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       const sessionReady = new Promise<Session>((r) => { resolveSession = r; });
 
       const session = await ai.live.connect({
-        model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+        model: VOICE_MODEL_PATH,
         config: {
           responseModalities: ["AUDIO"] as any,
-          systemInstruction: "You are a patient coding coach. Your top priority is respecting the developer's thinking time. When they are silent, they are thinking — wait for them to speak. Keep every response to 2-3 sentences max. Ask only one question at a time, then wait. Guide with questions only, never write code or reveal solutions. Match their energy — if they are quiet and focused, be brief. Only speak when spoken to, or when acknowledging their code updates.",
+          systemInstruction: SOLVE_VOICE_SYSTEM_PROMPT,
+          tools: [{ googleSearch: {} }],
           outputAudioTranscription: {},
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
           } as any,
           sessionResumption: {},
           contextWindowCompression: {
@@ -267,17 +317,26 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
               if (data.serverContent?.turnComplete) {
                 clearCompletedSources();
+                // No native audio this turn → speak the transcript via browser TTS.
+                if (!aiMutedRef.current && !nativeAudioThisTurnRef.current && turnTextRef.current.trim()) {
+                  speakFallback(turnTextRef.current);
+                }
+                turnTextRef.current = "";
+                nativeAudioThisTurnRef.current = false;
               }
 
               if (data.serverContent?.interrupted) {
                 flushAudioQueue();
+                try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
+                turnTextRef.current = "";
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.interrupted');
               }
 
-              // Audio chunks
+              // Audio chunks (native audio — used when the browser receives it)
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
+                    nativeAudioThisTurnRef.current = true;
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
@@ -287,6 +346,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.serverContent?.outputTranscription?.text) {
                 const text = data.serverContent.outputTranscription.text;
                 fullTranscriptRef.current += `\nCoach: ${text}`;
+                turnTextRef.current += text;
                 traceClient.traceEvent(traceSessionIdRef.current, 'ai.transcript', { output: { text } });
                 optionsRef.current.onTranscript?.({ role: "ai", text });
                 if (text.includes("[PROBLEM_SOLVED]")) {
@@ -306,6 +366,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           onclose: () => {
              console.log("[Solve] SDK Session closed (server-initiated)");
              traceClient.traceEvent(traceSessionIdRef.current, 'ws.close');
+             if (endedRef.current) return; // intentional stop — don't reconnect
              attemptReconnect();
           }
         }
@@ -325,6 +386,8 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   // ── Auto-Reconnect ──
 
   const attemptReconnect = async () => {
+    if (endedRef.current) return; // session was intentionally stopped
+    if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
     reconnectCountRef.current++;
     const attempt = reconnectCountRef.current;
 
@@ -347,7 +410,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     sessionRef.current = null;
 
     try {
-      const ephemeralToken = await fetchVoiceToken("solve", { resumptionHandle: handle });
+      const ephemeralToken = await fetchVoiceToken(modeRef.current, { resumptionHandle: handle });
       const ai = new GoogleGenAI({
         apiKey: ephemeralToken,
         httpOptions: { apiVersion: 'v1alpha' },
@@ -358,12 +421,13 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       });
 
       const newSession = await ai.live.connect({
-        model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
+        model: VOICE_MODEL_PATH,
         config: {
           responseModalities: ["AUDIO"] as any,
+          tools: [{ googleSearch: {} }],
           outputAudioTranscription: {},
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
           } as any,
           sessionResumption: { handle },
           contextWindowCompression: {
@@ -377,6 +441,9 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             traceClient.traceEvent(traceSessionIdRef.current, 'ws.reconnected', { metadata: { attempt } });
             setIsReconnecting(false);
             setIsConnected(true);
+            // Renew the reconnect budget only after the link stays up a while,
+            // so a flapping server still hits MAX_RECONNECTS instead of looping.
+            stableTimerRef.current = setTimeout(() => { reconnectCountRef.current = 0; }, 30_000);
             optionsRef.current.onReconnected?.();
           },
           onmessage: async (response: any) => {
@@ -389,11 +456,23 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 console.warn(`[Solve] ⚠️ GoAway received — timeLeft: ${data.goAway.timeLeft}`);
               }
               if (data.serverContent?.error) return;
-              if (data.serverContent?.turnComplete) clearCompletedSources();
-              if (data.serverContent?.interrupted) flushAudioQueue();
+              if (data.serverContent?.turnComplete) {
+                clearCompletedSources();
+                if (!aiMutedRef.current && !nativeAudioThisTurnRef.current && turnTextRef.current.trim()) {
+                  speakFallback(turnTextRef.current);
+                }
+                turnTextRef.current = "";
+                nativeAudioThisTurnRef.current = false;
+              }
+              if (data.serverContent?.interrupted) {
+                flushAudioQueue();
+                try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
+                turnTextRef.current = "";
+              }
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
                   if (part.inlineData?.mimeType?.startsWith("audio/pcm") || part.inlineData?.data) {
+                    nativeAudioThisTurnRef.current = true;
                     if (!aiMutedRef.current) playAudioChunk(part.inlineData.data);
                   }
                 }
@@ -402,6 +481,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
               if (data.serverContent?.outputTranscription?.text) {
                 const text = data.serverContent.outputTranscription.text;
                 fullTranscriptRef.current += `\nCoach: ${text}`;
+                turnTextRef.current += text;
                 optionsRef.current.onTranscript?.({ role: "ai", text });
                 if (text.includes("[PROBLEM_SOLVED]")) {
                   optionsRef.current.onProblemSolved?.();
@@ -418,6 +498,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
           },
           onclose: () => {
             console.log(`[Solve] SDK Session closed again (server-initiated)`);
+            if (endedRef.current) return; // intentional stop — don't reconnect
             attemptReconnect();
           }
         }

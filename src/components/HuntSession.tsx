@@ -5,6 +5,7 @@ import { useHuntVoice, VoiceTranscript } from "@/hooks/useHuntVoice";
 import { useAnimatedProgress } from "@/hooks/useAnimatedProgress";
 import BugAvatar from "@/components/BugAvatar";
 import CodeEditor from "@/components/CodeEditor";
+import SyllabusSidebar from "@/components/SyllabusSidebar";
 import { recordSession } from "@/utils/recordSession";
 import styles from "@/app/session/session.module.css";
 
@@ -28,10 +29,19 @@ interface Message {
 interface HuntSessionProps {
   skills: string[];
   difficulty: string;
+  topic?: string;
+  syllabus?: string[];
+  syllabusIndex?: number;
+  syllabusSource?: string;
+  onAdvanceSyllabus?: () => void;
   onEnd: () => void;
 }
 
-export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionProps) {
+export default function HuntSession({
+  skills, difficulty, topic,
+  syllabus, syllabusIndex = 0, syllabusSource,
+  onAdvanceSyllabus, onEnd,
+}: HuntSessionProps) {
   const [bug, setBug] = useState<BugData | null>(null);
   const [editedCode, setEditedCode] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -40,7 +50,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
   const [progressMessage, setProgressMessage] = useState("");
   const [progressPercent, setProgressPercent] = useState(0);
   const displayPercent = useAnimatedProgress(progressPercent);
-  const [timer, setTimer] = useState(300);
+  const [timer, setTimer] = useState(0);
   const [solvedCount, setSolvedCount] = useState(0);
   const [showSolvedBanner, setShowSolvedBanner] = useState(false);
   const [autoLoadNext, setAutoLoadNext] = useState(false);
@@ -67,15 +77,44 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
     });
   }, []);
 
+  const isSyllabusComplete = syllabus && syllabusIndex >= syllabus.length - 1;
+
   const handleBugSolved = useCallback(() => {
     setSolvedCount(prev => prev + 1);
     setShowSolvedBanner(true);
     if (autoLoadRef.current) clearTimeout(autoLoadRef.current);
     autoLoadRef.current = setTimeout(() => {
       setShowSolvedBanner(false);
-      setAutoLoadNext(true);
+      if (syllabus && onAdvanceSyllabus) {
+        if (isSyllabusComplete) {
+          handleEnd();
+        } else {
+          onAdvanceSyllabus();
+          setAutoLoadNext(true);
+        }
+      } else {
+        setAutoLoadNext(true);
+      }
     }, 3000);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syllabus, syllabusIndex, isSyllabusComplete, onAdvanceSyllabus]);
+
+  // Manual "Next" click — must advance syllabus if active
+  const handleNextClick = useCallback(() => {
+    if (autoLoadRef.current) clearTimeout(autoLoadRef.current);
+    setShowSolvedBanner(false);
+    if (syllabus && onAdvanceSyllabus) {
+      if (isSyllabusComplete) {
+        handleEnd();
+      } else {
+        onAdvanceSyllabus();
+        setAutoLoadNext(true);
+      }
+    } else {
+      loadNextBug();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syllabus, syllabusIndex, isSyllabusComplete, onAdvanceSyllabus]);
 
   const {
     isConnected, isRecording, isSpeaking, isAiMuted,
@@ -86,17 +125,11 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
     onBugSolved: handleBugSolved,
   });
 
-  // Timer
+  // Timer — counts up (open-ended)
   useEffect(() => {
     if (!started) return;
     const interval = setInterval(() => {
-      setTimer(prev => {
-        if (prev <= 1) {
-          handleEnd();
-          return 0;
-        }
-        return prev - 1;
-      });
+      setTimer(prev => prev + 1);
     }, 1000);
     return () => clearInterval(interval);
   }, [started]);
@@ -162,7 +195,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
     stopSession();
     if (codeUpdateTimerRef.current) clearTimeout(codeUpdateTimerRef.current);
     // Record session to database
-    const elapsed = 300 - timer;
+    const elapsed = timer;
     recordSession({
       mode: 'hunt',
       duration: elapsed,
@@ -190,7 +223,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
     // Reset UI state but keep the same bug
     setEditedCode(bug.buggyCode);
     setMessages([]);
-    setTimer(300);
+    setTimer(0);
     setSolvedCount(0);
     setShowSolvedBanner(false);
     setShowSummary(false);
@@ -227,6 +260,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
         body: JSON.stringify({
           skills: skills.map(s => s.toLowerCase().replace(".", "")),
           difficulty,
+          topic,
           excludeTopics: seenBugIds.current,
         }),
       });
@@ -287,12 +321,14 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
     setProgressMessage("🔍 Searching for next bug...");
     setProgressPercent(10);
     try {
+      const currentTopic = syllabus ? syllabus[syllabusIndex] : topic;
       const genRes = await fetch("/api/generate-bug", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           skills: skills.map(s => s.toLowerCase().replace(".", "")),
           difficulty,
+          topic: currentTopic,
           excludeTopics: seenBugIds.current,
         }),
       });
@@ -373,9 +409,13 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
     let summaryData = null;
     if (postSessionReport && !hasError) {
       try {
-        // the ADK returns results which contains an array, the last event is agent_response
-        // We look for 'content' in the object, or assume the report might be raw json text
-        const rawText = postSessionReport.results?.[postSessionReport.results.length - 1]?.content || JSON.stringify(postSessionReport);
+        let rawText = "";
+        const lastResult = postSessionReport.results?.[postSessionReport.results.length - 1];
+        if (lastResult?.content?.parts?.[0]?.text) {
+          rawText = lastResult.content.parts[0].text;
+        } else {
+          rawText = JSON.stringify(postSessionReport);
+        }
         // Clean markdown backticks if any
         const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
         summaryData = JSON.parse(cleaned);
@@ -389,8 +429,31 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
     return (
       <div className={styles.setupScreen}>
         <div className={styles.setupCard} style={{ maxWidth: '600px', width: '100%' }}>
-          <h1 className={styles.setupTitle}>📊 Post-Session AI Summary</h1>
-          
+          <h1 className={styles.setupTitle}>
+            {syllabus && isSyllabusComplete ? "🎓 Syllabus Complete!" : "📊 Post-Session AI Summary"}
+          </h1>
+
+          {syllabus && isSyllabusComplete && (
+            <div className={styles.syllabusCompleteCard}>
+              <p className={styles.syllabusCompleteText}>
+                You completed all <strong>{syllabus.length} topics</strong> in the syllabus!
+              </p>
+              {syllabusSource && (
+                <p className={styles.syllabusSource} style={{ marginTop: '4px' }}>
+                  Based on: {syllabusSource}
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: '24px', justifyContent: 'center', marginTop: '12px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  ⏱ {Math.floor(timer / 60)}:{(timer % 60).toString().padStart(2, '0')} total
+                </span>
+                <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  🐛 {solvedCount} bug{solvedCount !== 1 ? 's' : ''} found
+                </span>
+              </div>
+            </div>
+          )}
+
           {!postSessionReport ? (
             <div style={{ textAlign: 'center', padding: '40px' }}>
               <div className={styles.loadingPulse} style={{ fontSize: '3rem', marginBottom: '1rem' }}>🤖</div>
@@ -481,12 +544,24 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
 
       {showSolvedBanner && (
         <div className={styles.solvedBanner}>
-          <span>🎉 Bug Found! Great job!</span>
-          <button className={styles.nextBugBtn} onClick={loadNextBug}>Next Bug →</button>
+          <span>
+            {syllabus
+              ? isSyllabusComplete
+                ? "🎉 All done! Finishing syllabus…"
+                : `🎉 Bug Found! Loading topic ${syllabusIndex + 2} of ${syllabus.length}…`
+              : "🎉 Bug Found! Great job!"}
+          </span>
+          {!syllabus && (
+            <button className={styles.nextBugBtn} onClick={handleNextClick}>Next Bug →</button>
+          )}
         </div>
       )}
 
-      <main className={styles.sessionMain}>
+      <div className={styles.sessionBody}>
+        {syllabus && (
+          <SyllabusSidebar syllabus={syllabus} currentIndex={syllabusIndex} />
+        )}
+        <main className={styles.sessionMain}>
         <div className={styles.codePanel}>
           <div className={styles.codePanelHeader}>
             <span className={styles.codePanelTitle}>📄 {bug?.title}</span>
@@ -565,6 +640,7 @@ export default function HuntSession({ skills, difficulty, onEnd }: HuntSessionPr
           </div>
         </div>
       </main>
+      </div>
     </div>
   );
 }

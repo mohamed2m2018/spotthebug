@@ -1,5 +1,6 @@
 .sessionPage {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--color-bg);
@@ -94,6 +95,14 @@
   box-shadow: 0 0 12px rgba(230, 126, 34, 0.15);
 }
 
+/* Sidebar + Main wrapper */
+.sessionBody {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  height: calc(100vh - var(--header-height));
+}
+
 /* Main Layout */
 .sessionMain {
   flex: 1;
@@ -101,7 +110,9 @@
   grid-template-columns: 1fr 1fr;
   gap: 0;
   overflow: hidden;
-  height: calc(100vh - var(--header-height));
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
 }
 
 /* ===== Code Panel ===== */
@@ -110,6 +121,8 @@
   flex-direction: column;
   border-right: 1px solid var(--color-border);
   overflow: hidden;
+  min-height: 0;
+  min-width: 0;
 }
 
 .codePanelHeader {
@@ -166,6 +179,7 @@
 
 .codeContent {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   padding: 0;
   background: #0d1117;
@@ -553,6 +567,269 @@
   background: rgba(230, 126, 34, 0.1);
   color: var(--color-primary-light);
   box-shadow: 0 0 12px rgba(230, 126, 34, 0.15);
+}
+
+.topicInputWrapper {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xl);
+  align-items: stretch;
+}
+
+.topicInput {
+  flex: 1;
+  padding: var(--space-md) var(--space-lg);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.topicInput:focus {
+  border-color: var(--color-primary);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 3px rgba(230, 126, 34, 0.1);
+}
+
+.topicInput::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Language / Framework optional inputs */
+.optionalRow {
+  display: flex;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+}
+
+.optionalField {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.optionalLabel {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.optionalInput {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text);
+  font-size: 0.84rem;
+  font-family: inherit;
+  outline: none;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.optionalInput:focus {
+  border-color: var(--color-primary);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 2px rgba(230, 126, 34, 0.08);
+}
+
+.optionalInput::placeholder {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+/* Generate Syllabus button */
+.syllabusBtn {
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: 12px;
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  background: rgba(139, 92, 246, 0.12);
+  color: #a78bfa;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.syllabusBtn:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.22);
+  border-color: rgba(139, 92, 246, 0.7);
+  box-shadow: 0 0 14px rgba(139, 92, 246, 0.2);
+}
+
+.syllabusBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Syllabus preview list (shown in setup) */
+.syllabusList {
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 16px;
+  padding: var(--space-xl);
+  margin-bottom: var(--space-xl);
+  text-align: left;
+  animation: fadeIn 0.4s ease;
+}
+
+.syllabusHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-sm);
+  gap: var(--space-md);
+}
+
+.syllabusTitle {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #a78bfa;
+}
+
+.syllabusSource {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.syllabusDescription {
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-lg);
+  line-height: 1.5;
+}
+
+.syllabusItems {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.syllabusItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.syllabusItemNum {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  width: 20px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.syllabusItemText {
+  font-size: 0.88rem;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.syllabusItemActive {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.syllabusItemActive .syllabusItemNum {
+  color: #a78bfa;
+}
+
+.syllabusItemActive .syllabusItemText {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.syllabusItemDone .syllabusItemText {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+}
+
+/* Session header progress pill */
+.syllabusProgress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 14px;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: var(--radius-full);
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+}
+
+.syllabusProgressBadge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #a78bfa;
+  flex-shrink: 0;
+}
+
+.syllabusProgressTopic {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Syllabus complete card (shown in summary) */
+.syllabusCompleteCard {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(109, 40, 217, 0.08));
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 12px;
+  padding: var(--space-lg) var(--space-xl);
+  text-align: center;
+  margin-bottom: var(--space-xl);
+  animation: fadeIn 0.4s ease;
+}
+
+.syllabusCompleteText {
+  font-size: 1rem;
+  color: #c4b5fd;
+  margin: 0;
+}
+
+/* "or narrow by framework" divider */
+.orDivider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin: var(--space-xl) 0 var(--space-lg);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.orDivider::before,
+.orDivider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
 }
 
 .startBtn {

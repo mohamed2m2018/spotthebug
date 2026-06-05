@@ -34,8 +34,9 @@ export function useAudioPlayback(logPrefix: string = "[Voice]"): UseAudioPlaybac
     if (!audioContextRef.current) return;
     const ctx = audioContextRef.current;
 
+    // Resume a suspended context (browser autoplay policy can pause it).
     if (ctx.state === "suspended") {
-      ctx.resume();
+      ctx.resume().catch(() => {});
     }
 
     chunkCountRef.current++;
@@ -75,9 +76,13 @@ export function useAudioPlayback(logPrefix: string = "[Voice]"): UseAudioPlaybac
 
     setIsSpeaking(true);
     if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
+    // Flip "speaking" off when ALL scheduled audio has finished, not just this
+    // chunk. Chunks stream in faster than realtime, so timing off a single
+    // chunk's duration flickers the indicator off mid-speech.
+    const remainingMs = (nextPlayTimeRef.current - ctx.currentTime) * 1000 + 250;
     speakingTimerRef.current = setTimeout(() => {
       setIsSpeaking(false);
-    }, scheduledDuration * 1000 + 500);
+    }, remainingMs);
   }, [logPrefix]);
 
   const flushAudioQueue = useCallback(() => {

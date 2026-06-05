@@ -215,7 +215,7 @@ export default function Home() {
               Real-time bidirectional voice with native audio generation.
               Interruptible conversations — not text-to-speech.
             </p>
-            <div className={styles.techCardModel}>gemini-2.5-flash-native-audio</div>
+            <div className={styles.techCardModel}>gemini-3.1-flash-live</div>
           </div>
 
           <div className={styles.techCard}>
