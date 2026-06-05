@@ -93,16 +93,24 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
   // ── Text / Code Sending ──
 
+  // Buffer of client turns not yet acknowledged by the server (cleared on the
+  // server's turnComplete). On reconnect we resend these so a message sent right
+  // at a connection drop isn't lost.
+  const clientBufRef = useRef<string[]>([]);
+  const sendTurn = useCallback((text: string, session?: Session | null) => {
+    clientBufRef.current.push(text);
+    if (clientBufRef.current.length > 10) clientBufRef.current.shift();
+    const s = session ?? sessionRef.current;
+    try {
+      s?.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: true });
+    } catch { /* session closing */ }
+  }, []);
+
   const sendText = useCallback((text: string) => {
     if (!sessionRef.current) return;
-    
     fullTranscriptRef.current += `\nDeveloper: ${text}`;
-    
-    sessionRef.current.sendClientContent({
-      turns: [{ role: "user", parts: [{ text }] }],
-      turnComplete: true,
-    });
-  }, []);
+    sendTurn(text);
+  }, [sendTurn]);
 
   const sendCodeUpdate = useCallback((code: string) => {
     sendText(`[CODE_UPDATE] The developer edited their solution:\n\`\`\`\n${code}\n\`\`\``);
@@ -179,6 +187,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     endedRef.current = false;
     reconnectingRef.current = false;
     reconnectCountRef.current = 0;
+    clientBufRef.current = [];
     fullTranscriptRef.current = "";
 
     try {
@@ -238,10 +247,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
             : SOLVE_INTRO_FALLBACK;
 
           console.log('[Solve] 📝 Sending intro context to session');
-          liveSession.sendClientContent({
-            turns: [{ role: "user", parts: [{ text: introText }] }],
-            turnComplete: true,
-          });
+          sendTurn(introText, liveSession);
         } catch (micError) {
           console.error("[Solve] Microphone error:", micError);
           stopSession();
@@ -308,6 +314,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
               if (data.serverContent?.turnComplete) {
                 clearCompletedSources();
+                clientBufRef.current = []; // server consumed our turn → ack
               }
 
               if (data.serverContent?.interrupted) {
@@ -444,7 +451,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
                 if (!endedRef.current) attemptReconnect();
               }
               if (data.serverContent?.error) return;
-              if (data.serverContent?.turnComplete) clearCompletedSources();
+              if (data.serverContent?.turnComplete) { clearCompletedSources(); clientBufRef.current = []; }
               if (data.serverContent?.interrupted) flushAudioQueue();
               if (data.serverContent?.modelTurn?.parts) {
                 for (const part of data.serverContent.modelTurn.parts) {
@@ -481,6 +488,12 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
       });
 
       sessionRef.current = newSession;
+
+      // Resend client turns the server hadn't acknowledged before the drop.
+      const pending = [...clientBufRef.current];
+      for (const t of pending) {
+        try { newSession.sendClientContent({ turns: [{ role: "user", parts: [{ text: t }] }], turnComplete: true }); } catch { /* noop */ }
+      }
 
     } catch (error) {
       console.error(`[Solve] Reconnect attempt ${attempt} failed:`, error);
