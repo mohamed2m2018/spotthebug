@@ -94,7 +94,8 @@ export async function POST(req: NextRequest) {
               triggerTokens: "200000",
               slidingWindow: { targetTokens: "100000" },
             },
-            // Session resumption → survive periodic WebSocket resets
+            // Session resumption (opaque — transparent mode is Vertex-only, not
+            // supported on the Gemini Developer API). Survives WebSocket resets.
             sessionResumption: {
               ...(resumptionHandle ? { handle: resumptionHandle } : {}),
             },
