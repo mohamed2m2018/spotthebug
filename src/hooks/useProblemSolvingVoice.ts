@@ -92,7 +92,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
   // no turnComplete, no error (google-gemini/cookbook#1226). The turnComplete-based
   // retry can't fire there, so a timer re-nudges if no audio arrives in time.
   const audioWatchdogRef = useRef<NodeJS.Timeout | null>(null);
-  const AUDIO_WATCHDOG_MS = 5000;
+  const AUDIO_WATCHDOG_MS = 8000; // longer than typical first-response latency, so a slow start isn't mistaken for a freeze
   // Reassigned each render; called via ref so sendTurn (a stable useCallback) can
   // invoke it without a dependency cycle.
   const armWatchdogRef = useRef<() => void>(() => {});
@@ -180,7 +180,10 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     audioWatchdogRef.current = setTimeout(() => {
       audioWatchdogRef.current = null;
       if (endedRef.current || aiMutedRef.current) return;
-      if (turnHadAudioRef.current) return;                       // audio did arrive
+      // Only nudge on a TRUE freeze — NOTHING came back. If audio OR transcript
+      // arrived, the model is responding (maybe just slow); nudging here injects a
+      // phantom "continue" that the model answers with "تمام…" as if replying.
+      if (turnHadAudioRef.current || turnHadTranscriptRef.current) return;
       if (voiceRetryCountRef.current >= MAX_VOICE_RETRIES) return; // give up after cap
       voiceRetryCountRef.current++;
       try { traceClient.traceEvent(traceSessionIdRef.current, 'ai.voiceWatchdog', { metadata: { attempt: voiceRetryCountRef.current } }); } catch { /* noop */ }
