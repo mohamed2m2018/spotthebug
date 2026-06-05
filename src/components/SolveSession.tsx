@@ -10,6 +10,7 @@ import SyllabusSidebar from "@/components/SyllabusSidebar";
 import { recordSession } from "@/utils/recordSession";
 import { markCovered, useCovered } from "@/lib/coverage";
 import { SQL_SCHEMA_DESCRIPTION, SQL_SCHEMA_COMPACT } from "@/config/sqlSandbox";
+import { DSA_PROBLEM_DETAILS } from "@/config/syllabi";
 import { saveSession, type SavedSession } from "@/lib/sessionStore";
 import { appendJournal } from "@/lib/learningJournal";
 import type { PredefinedProblem } from "@/config/problems";
@@ -266,20 +267,27 @@ export default function SolveSession({
     // IS the lesson — the coach teaches it directly. No on-the-fly generation.
     if (trackId && syllabus && syllabus.length > 0) {
       const conceptTopic = syllabus[syllabusIndex] ?? topic ?? "this topic";
+      // DSA track: the syllabus item is a concrete LeetCode problem — show its
+      // statement in the panel and a function stub in the editor.
+      const dsaDetail = trackId === "dsa" ? DSA_PROBLEM_DETAILS[syllabusIndex] : undefined;
       const starter =
         mode === "sysdesign"
           ? "// Design scratchpad — not runnable code.\n// 1) Classes / data model:\n\n\n// 2) Algorithm & scaling (in words):\n\n"
           : mode === "sql"
           ? "-- Scratchpad — write your queries here\n"
+          : dsaDetail
+          ? dsaDetail.starter
           : "// Scratchpad — try your solution here\n";
       const problemData: ProblemData = {
         id: `${trackId}-${syllabusIndex}`,
-        title: conceptTopic,
+        title: dsaDetail ? dsaDetail.name : conceptTopic,
         description:
           mode === "sysdesign"
             ? "Design topic — sketch your classes / data model, then explain the algorithm and how it scales. The coach teaches this concept."
             : mode === "sql"
             ? `Write queries in the editor and hit Run — they execute against this practice database.\n\n${SQL_SCHEMA_DESCRIPTION}`
+            : dsaDetail
+            ? dsaDetail.statement
             : "Problem-solving pattern — the coach teaches this pattern and walks you through a problem.",
         topic: conceptTopic,
         difficulty,
