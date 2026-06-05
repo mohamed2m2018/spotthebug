@@ -1,13 +1,13 @@
 "use client";
 
 /**
- * Save & resume a teaching session. Persists the session snapshot (mode, topic,
- * editor code, transcript, syllabus position) in localStorage so the learner can
- * close the app and pick up where they left off.
+ * Save & resume teaching sessions. Persists a LIST of session snapshots (each
+ * its own entry, keyed by id) in localStorage so the learner can keep several
+ * saved sessions and resume any of them.
  *
- * The live voice connection itself cannot resume after a long gap (the Gemini
- * resumption handle is short-lived), so resuming restores the UI + progress and
- * starts a fresh voice session that continues the same topic.
+ * The live voice connection can't resume after a long gap (the resumption
+ * handle is short-lived), so resuming restores the UI + progress and starts a
+ * fresh voice session that continues the same topic.
  */
 
 import { useEffect, useState } from "react";
@@ -19,6 +19,7 @@ export interface SavedMessage {
 }
 
 export interface SavedSession {
+  id: string;
   mode: SolveMode;
   trackId?: string;
   syllabusIndex: number;
@@ -28,38 +29,48 @@ export interface SavedSession {
   savedAt: number;
 }
 
-const KEY = "stb_saved_session_v1";
-const EVENT = "stb-saved-session";
+const KEY = "stb_saved_sessions_v1";
+const EVENT = "stb-saved-sessions";
+const MAX = 30;
 
-export function saveSession(s: SavedSession): void {
-  if (typeof window === "undefined") return;
+function readAll(): SavedSession[] {
+  if (typeof window === "undefined") return [];
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
-    window.dispatchEvent(new Event(EVENT));
-  } catch { /* quota / disabled */ }
-}
-
-export function loadSession(): SavedSession | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as SavedSession) : null;
+    return JSON.parse(localStorage.getItem(KEY) || "[]") as SavedSession[];
   } catch {
-    return null;
+    return [];
   }
 }
 
-export function clearSession(): void {
+function writeAll(list: SavedSession[]): void {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(KEY);
-  window.dispatchEvent(new Event(EVENT));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(list.slice(0, MAX)));
+    window.dispatchEvent(new Event(EVENT));
+  } catch { /* quota */ }
 }
 
-/** Live-updating saved session (for the resume banner on the select screen). */
-export function useSavedSession(): SavedSession | null {
-  const [saved, setSaved] = useState<SavedSession | null>(null);
+/** Upsert a session by id; most-recent first. */
+export function saveSession(s: SavedSession): void {
+  const list = readAll().filter((x) => x.id !== s.id);
+  list.unshift(s);
+  list.sort((a, b) => b.savedAt - a.savedAt);
+  writeAll(list);
+}
+
+export function loadSessions(): SavedSession[] {
+  return readAll().sort((a, b) => b.savedAt - a.savedAt);
+}
+
+export function removeSession(id: string): void {
+  writeAll(readAll().filter((x) => x.id !== id));
+}
+
+/** Live-updating list of saved sessions (for the resume list on the select screen). */
+export function useSavedSessions(): SavedSession[] {
+  const [list, setList] = useState<SavedSession[]>([]);
   useEffect(() => {
-    const update = () => setSaved(loadSession());
+    const update = () => setList(loadSessions());
     update();
     window.addEventListener(EVENT, update);
     window.addEventListener("storage", update);
@@ -68,5 +79,5 @@ export function useSavedSession(): SavedSession | null {
       window.removeEventListener("storage", update);
     };
   }, []);
-  return saved;
+  return list;
 }

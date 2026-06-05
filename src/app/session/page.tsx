@@ -10,7 +10,7 @@ import { PREDEFINED_PROBLEMS, PROBLEM_CATEGORIES, getProblemById, type Predefine
 import { MODE_SYLLABI, DSA_SYLLABUS, type ModeSyllabus } from "@/config/syllabi";
 import CoverageOverview from "@/components/CoverageOverview";
 import { getCovered } from "@/lib/coverage";
-import { useSavedSession, clearSession, type SavedSession } from "@/lib/sessionStore";
+import { useSavedSessions, removeSession, type SavedSession } from "@/lib/sessionStore";
 import { generateStudyGuide } from "@/lib/studyGuide";
 
 import styles from "./session.module.css";
@@ -54,7 +54,7 @@ export default function SessionPage() {
   const [trackId, setTrackId] = useState<string | null>(null);
   // Resume support
   const [resumeState, setResumeState] = useState<SavedSession | null>(null);
-  const savedSession = useSavedSession();
+  const savedSessions = useSavedSessions();
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/login");
@@ -162,15 +162,21 @@ export default function SessionPage() {
         <div className={styles.modeSelectCard}>
           <h1 className={styles.setupTitle}>🐛 Choose Your Mode</h1>
           <p className={styles.setupSubtitle}>How do you want to level up today?</p>
-          {savedSession && (
-            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.8rem 1rem", margin: "0 auto 1.25rem", maxWidth: "640px", borderRadius: "12px", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.08)" }}>
-              <span style={{ fontSize: "1.3rem" }}>⏯️</span>
-              <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
-                <div style={{ color: "#86efac", fontWeight: 700, fontSize: "0.9rem" }}>Resume last session</div>
-                <div style={{ color: "#94a3b8", fontSize: "0.8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{savedSession.topicLabel}</div>
+          {savedSessions.length > 0 && (
+            <div style={{ margin: "0 auto 1.25rem", maxWidth: "640px", textAlign: "left" }}>
+              <div style={{ color: "#86efac", fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.5rem" }}>⏯️ Saved sessions — resume any</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", maxHeight: "220px", overflowY: "auto" }}>
+                {savedSessions.map((s) => (
+                  <div key={s.id} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.8rem", borderRadius: "10px", border: "1px solid rgba(34,197,94,0.25)", background: "rgba(34,197,94,0.06)" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: "#e2e8f0", fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.topicLabel}</div>
+                      <div style={{ color: "#64748b", fontSize: "0.72rem" }}>{new Date(s.savedAt).toLocaleString()} · {s.trackId}</div>
+                    </div>
+                    <button onClick={() => resumeSaved(s)} style={{ padding: "0.4rem 0.9rem", borderRadius: "8px", border: "none", background: "#22c55e", color: "#0b0b0b", fontWeight: 700, cursor: "pointer" }}>Resume</button>
+                    <button onClick={() => removeSession(s.id)} style={{ padding: "0.4rem 0.6rem", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.15)", background: "transparent", color: "#94a3b8", cursor: "pointer" }}>✕</button>
+                  </div>
+                ))}
               </div>
-              <button onClick={() => resumeSaved(savedSession)} style={{ padding: "0.5rem 1rem", borderRadius: "8px", border: "none", background: "#22c55e", color: "#0b0b0b", fontWeight: 700, cursor: "pointer" }}>Resume</button>
-              <button onClick={() => clearSession()} style={{ padding: "0.5rem 0.75rem", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.15)", background: "transparent", color: "#94a3b8", cursor: "pointer" }}>Discard</button>
             </div>
           )}
           <div className={styles.modeGrid}>

@@ -92,6 +92,15 @@ export default function SolveSession({
   const messagesRef = useRef<Message[]>([]);
   const problemRef = useRef<ProblemData | null>(null);
   const lastSentCodeRef = useRef(""); // last code snapshot the coach received
+  const sessionIdRef = useRef<string>(resumeState?.id ?? "");
+  const ensureSessionId = () => {
+    if (!sessionIdRef.current) {
+      sessionIdRef.current = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `s_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    }
+    return sessionIdRef.current;
+  };
 
   // Save this topic's transcript to the learning journal (for the study guide).
   const journalCurrent = useCallback(() => {
@@ -179,6 +188,7 @@ export default function SolveSession({
   useEffect(() => {
     if (!trackId || !problem || !started) return;
     saveSession({
+      id: ensureSessionId(),
       mode, trackId, syllabusIndex,
       topicLabel: problem.title,
       code, messages,
@@ -295,12 +305,15 @@ export default function SolveSession({
       setCode(resuming ? (resumeState!.code || starter) : starter);
       setMessages(resuming ? resumeState!.messages : [{ role: "ai", text: "Session started! Let's learn this together." }]);
       const schemaNote = mode === "sql" ? `\n\n${SQL_SCHEMA_DESCRIPTION}` : "";
-      const lastCoachLine = resuming
-        ? ([...resumeState!.messages].reverse().find(m => m.role === "ai")?.text || "")
-            .replace(/\[[A-Z_]+\]/g, "").trim().slice(0, 400)
+      const recap = resuming
+        ? [...resumeState!.messages]
+            .filter(m => m.role === "ai")
+            .slice(-6)
+            .map(m => "• " + m.text.replace(/\[[A-Z_]+\]/g, "").trim().slice(0, 120))
+            .join("\n")
         : "";
       const problemContext = resuming
-        ? `Resuming the topic **${conceptTopic}**. You ALREADY taught part of it — your last words were: "${lastCoachLine}". Continue in Arabic from exactly where that left off; do NOT restart from the beginning. First welcome the developer back in ONE short sentence.${schemaNote}`
+        ? `You are RESUMING an in-progress lesson on **${conceptTopic}**. Do NOT restart, re-introduce, or re-motivate the topic — that frustrates the learner. Here is what you ALREADY taught (oldest → newest):\n${recap}\n\nIn ONE short Arabic sentence remind them where you stopped, then teach the NEXT point that comes after the above. Never repeat anything already covered.${schemaNote}`
         : mode === "sql"
         ? `Topic to teach: **${conceptTopic}**${schemaNote}\n\nFocused learning session on this single topic. Teach it from the ground up following the learner profile, using the practice tables above, then give the developer a query to write and Run against this database.`
         : `Topic to teach: **${conceptTopic}**\n\nThis is a focused learning session on this single topic. Teach it from the ground up following the learner profile, then give the developer something to try.`;

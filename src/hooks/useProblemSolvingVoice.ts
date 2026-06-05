@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import {
   fetchVoiceToken, arrayBufferToBase64,
   downsampleTo16k, float32ToInt16,
@@ -93,6 +93,22 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
 
   // ── AI Mute (pause AI audio output) ──
   const aiMutedRef = useRef(false);
+
+  // Safety: kill the session + audio if the page is hidden or closed, so the
+  // voice never keeps talking after the user leaves.
+  useEffect(() => {
+    const stop = () => {
+      endedRef.current = true;
+      sessionGenRef.current++;
+      try { sessionRef.current?.close(); } catch { /* noop */ }
+      sessionRef.current = null;
+      flushAudioQueue();
+      try { audioContextRef.current?.close(); } catch { /* noop */ }
+      audioContextRef.current = null;
+    };
+    window.addEventListener("pagehide", stop);
+    return () => window.removeEventListener("pagehide", stop);
+  }, [flushAudioQueue, audioContextRef]);
 
   // ── Text / Code Sending ──
 
