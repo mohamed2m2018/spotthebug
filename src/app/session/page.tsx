@@ -21,7 +21,7 @@ const DIFFICULTY_LEVELS = [
   { value: "advanced", label: "🔴 Advanced" },
 ];
 
-type SessionMode = "hunt" | "pair" | "solve" | "sql" | "sysdesign";
+type SessionMode = "hunt" | "pair" | "solve" | "sql" | "sysdesign" | "explain";
 
 interface SyllabusData {
   syllabus: string[];
@@ -244,6 +244,14 @@ export default function SessionPage() {
               <span className={styles.modeLabel}>Backend &amp; System Design</span>
               <span className={styles.modeDesc}>Learn backend concepts through design problems — Kafka, Redis, concurrency, memory leaks, sharding, OOD & recommenders at scale</span>
             </button>
+            <button
+              className={styles.modeCard}
+              onClick={() => { setMode("explain"); resetSetup(); setSelectedTopic(undefined); setPhase("setup"); }}
+            >
+              <span className={styles.modeIcon}>📖</span>
+              <span className={styles.modeLabel}>Explain a Topic</span>
+              <span className={styles.modeDesc}>Type ANY topic (e.g. JWT, event loop, B-tree indexes, CAP) and the coach explains it step by step in voice</span>
+            </button>
           </div>
           <CoverageOverview />
         </div>
@@ -430,6 +438,43 @@ export default function SessionPage() {
   // ── Hunt Setup ──
   if (phase === "setup" && mode === "hunt") return renderSetupForm("hunt");
 
+  // ── Explain-a-Topic Setup (free text) ──
+  if (phase === "setup" && mode === "explain") {
+    const canStart = !!selectedTopic?.trim();
+    return (
+      <div className={styles.setupScreen}>
+        <div className={styles.setupCard}>
+          <h1 className={styles.setupTitle}>📖 Explain a Topic</h1>
+          <p className={styles.setupSubtitle}>اكتب أي موضوع وهشرحهولك خطوة بخطوة بالصوت</p>
+          <textarea
+            value={selectedTopic || ""}
+            onChange={(e) => setSelectedTopic(e.target.value || undefined)}
+            placeholder="مثال: إزاي الـ JWT بيشتغل؟ · event loop في JavaScript · B-tree indexes · TCP vs UDP · CAP theorem"
+            dir="auto"
+            rows={3}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canStart) setPhase("active"); }}
+            style={{ width: "100%", padding: "0.75rem", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.04)", color: "#e2e8f0", fontSize: "0.95rem", resize: "vertical", marginBottom: "1rem", fontFamily: "inherit" }}
+          />
+          <div style={{ display: "flex", gap: "0.6rem" }}>
+            <button
+              onClick={() => { if (canStart) setPhase("active"); }}
+              disabled={!canStart}
+              style={{ flex: 1, padding: "0.75rem", borderRadius: 10, border: "none", background: canStart ? "linear-gradient(135deg,#22c55e,#16a34a)" : "rgba(255,255,255,0.08)", color: canStart ? "#06240f" : "#64748b", fontWeight: 700, cursor: canStart ? "pointer" : "not-allowed" }}
+            >
+              ▶ Start Explaining
+            </button>
+            <button
+              onClick={() => { setPhase("select"); setMode(null); setSelectedTopic(undefined); }}
+              style={{ padding: "0.75rem 1rem", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "transparent", color: "#94a3b8", cursor: "pointer" }}
+            >
+              ← Back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Solve Setup with Problem Picker ──
   if (phase === "setup" && mode === "solve") {
     if (showProblemPicker) {
@@ -581,6 +626,19 @@ export default function SessionPage() {
         onAdvanceSyllabus={syllabusData ? handleAdvanceSyllabus : undefined}
         onEnd={() => { setPhase("select"); setMode(null); setResumeState(null); }}
         trackId={trackId ?? undefined}
+        resumeState={resumeState ?? undefined}
+      />
+    );
+  }
+
+  if (phase === "active" && mode === "explain") {
+    return (
+      <SolveSession
+        mode="explain"
+        skills={[]}
+        difficulty={selectedDifficulty}
+        topic={selectedTopic}
+        onEnd={() => { setPhase("select"); setMode(null); setResumeState(null); setSelectedTopic(undefined); }}
         resumeState={resumeState ?? undefined}
       />
     );

@@ -15,7 +15,7 @@ interface TraceAction {
   action: "startTrace" | "event" | "spanStart" | "spanEnd" | "endTrace";
   sessionId: string;
   name?: string;
-  mode?: "pair" | "hunt" | "solve" | "sql" | "sysdesign";
+  mode?: "pair" | "hunt" | "solve" | "sql" | "sysdesign" | "explain";
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -74,7 +74,7 @@ export function generateSessionId(): string {
 /** Create a root trace for a voice session */
 export function startTrace(
   sessionId: string,
-  mode: "pair" | "hunt" | "solve" | "sql" | "sysdesign",
+  mode: "pair" | "hunt" | "solve" | "sql" | "sysdesign" | "explain",
   metadata?: Record<string, unknown>
 ): void {
   enqueue({ action: "startTrace", sessionId, mode, metadata, timestamp: Date.now() });

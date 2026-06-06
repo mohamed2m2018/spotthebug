@@ -8,16 +8,17 @@ import {
 import { GoogleGenAI } from "@google/genai";
 import type { Session } from "@google/genai";
 import { useAudioPlayback } from "@/hooks/useAudioPlayback";
-import { buildSolveIntroPrompt, buildSqlIntroPrompt, buildSysdesignIntroPrompt, SOLVE_INTRO_FALLBACK, SOLVE_VOICE_SYSTEM_PROMPT } from "@/config/prompts";
+import { buildSolveIntroPrompt, buildSqlIntroPrompt, buildSysdesignIntroPrompt, buildExplainIntroPrompt, SOLVE_INTRO_FALLBACK, SOLVE_VOICE_SYSTEM_PROMPT } from "@/config/prompts";
 import { VOICE_MODEL_PATH, VOICE_NAME } from "@/config/voiceModel";
 import * as traceClient from "@/lib/traceClient";
 
-export type SolveMode = "solve" | "sql" | "sysdesign";
+export type SolveMode = "solve" | "sql" | "sysdesign" | "explain";
 
 const INTRO_BUILDERS: Record<SolveMode, (ctx: string) => string> = {
   solve: buildSolveIntroPrompt,
   sql: buildSqlIntroPrompt,
   sysdesign: buildSysdesignIntroPrompt,
+  explain: buildExplainIntroPrompt,
 };
 
 export interface VoiceTranscript {

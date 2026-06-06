@@ -68,7 +68,7 @@ export default function SolveSession({
   // Non-solve modes are teaching sessions. SQL runs against a SQLite sandbox.
   const isCodingMode = mode === "solve";
   const isSqlMode = mode === "sql";
-  const editorLanguage = mode === "sql" ? "sql" : mode === "sysdesign" ? "plaintext" : undefined;
+  const editorLanguage = mode === "sql" ? "sql" : (mode === "sysdesign" || mode === "explain") ? "plaintext" : undefined;
   // Persisted coverage for this track (live-updating, survives reloads/days).
   const completedConcepts = useCovered(trackId ?? "");
   const [problem, setProblem] = useState<ProblemData | null>(null);
@@ -260,6 +260,43 @@ export default function SolveSession({
       } catch (error) {
         console.error("Failed to start voice session:", error);
         setMessages([{ role: "ai", text: "Voice session failed to start. You can still solve the problem — use the hint button for guidance." }]);
+        setStarted(true);
+      }
+      setIsLoading(false);
+      return;
+    }
+
+    // EXPLAIN mode: the learner typed a free topic — the coach just explains it.
+    // No editor execution; the scratchpad is for the learner's own notes.
+    if (mode === "explain") {
+      const t = (topic || "").trim() || "هذا الموضوع";
+      const resuming = !!(resumeState && resumeState.messages?.length);
+      const problemData: ProblemData = {
+        id: `explain-${ensureSessionId()}`,
+        title: t,
+        description: "📖 المدرّس بيشرحلك الموضوع ده خطوة بخطوة. تقدر تكتب ملاحظاتك في المساحة دي.",
+        topic: t, difficulty, language: "plaintext", framework: "",
+        examples: [], starterCode: "", functionName: "", referenceSolution: "",
+        hint1: "", hint2: "", hint3: "", testCases: [], grounded: false,
+      };
+      setProblem(problemData);
+      setCode(resuming ? (resumeState!.code || "") : "");
+      setMessages(resuming ? resumeState!.messages : [{ role: "ai", text: "Session started! Let's learn this together." }]);
+      const lastAiSaid = resuming
+        ? [...resumeState!.messages].reverse()
+            .map((m) => (m.role === "ai" ? m.text.replace(/\[[A-Z_]+\]/g, "").trim() : ""))
+            .find((x) => x && !x.startsWith("Session started"))
+        : "";
+      const recapNote = lastAiSaid ? ` آخر نقطة وقفنا عندها: "${lastAiSaid.slice(0, 160)}".` : "";
+      const problemContext = resuming
+        ? `CONTINUING SESSION — جلسة مكمّلة. الموضوع: **${t}**.${recapNote} كمّل من النقطة اللي بعدها، ومتبدأش من الأول.`
+        : t;
+      try {
+        await startSession(problemContext);
+        setStarted(true);
+      } catch (error) {
+        console.error("Failed to start session:", error);
+        setMessages([{ role: "ai", text: "Voice session failed to start. Try again." }]);
         setStarted(true);
       }
       setIsLoading(false);
