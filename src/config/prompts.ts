@@ -571,7 +571,12 @@ export function buildExplainIntroPrompt(problemContext: string): string {
   if (problemContext.startsWith("CONTINUING SESSION")) {
     return `${problemContext}\n\nكمّل بالعربي في جملة قصيرة: لخّص وقفنا فين وكمّل الخطوة اللي بعدها، اسأل سؤال واحد وبعدين اسكت. متعيدش الترحيب ولا الشرح من الأول.`;
   }
-  return `ابدأ شرح دلوقتي للموضوع ده: ${problemContext}. رحّب بجملة واحدة قصيرة، اشرح أول فكرة بس (ليه الموضوع ده مهم)، اسأل سؤال واحد، وبعدين اسكت.`;
+  // The material/topic lives in the locked system instruction — keep this opening
+  // turn SHORT so it reliably gets audio.
+  if (problemContext === "__EXPLAIN_MATERIAL__") {
+    return `ابدأ دلوقتي اشرح للمتعلّم المادة اللي عندك في التعليمات، من الأول وفكرة فكرة. رحّب بجملة واحدة قصيرة، اشرح أول نقطة بس، اسأل سؤال واحد، وبعدين اسكت.`;
+  }
+  return `ابدأ شرح دلوقتي للموضوع ده: ${problemContext}. رحّب بجملة واحدة قصيرة، اشرح أول فكرة بس، اسأل سؤال واحد، وبعدين اسكت.`;
 }
 
 /** Fallback intro when no problem context is provided. */

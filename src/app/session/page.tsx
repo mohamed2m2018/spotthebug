@@ -447,13 +447,13 @@ export default function SessionPage() {
       <div className={styles.setupScreen}>
         <div className={styles.setupCard}>
           <h1 className={styles.setupTitle}>📖 Explain a Topic</h1>
-          <p className={styles.setupSubtitle}>اكتب أي موضوع وهشرحهولك خطوة بخطوة بالصوت</p>
+          <p className={styles.setupSubtitle}>اكتب موضوع، أو الصق نص طويل / مقال / ملاحظات — وهشرحهولك خطوة بخطوة بالصوت</p>
           <textarea
             value={selectedTopic || ""}
             onChange={(e) => setSelectedTopic(e.target.value || undefined)}
-            placeholder="مثال: إزاي الـ JWT بيشتغل؟ · event loop في JavaScript · B-tree indexes · TCP vs UDP · CAP theorem"
+            placeholder="موضوع قصير (مثال: إزاي JWT بيشتغل؟ · event loop · CAP theorem) — أو الصق نص/مقال كامل وهشرحهولك"
             dir="auto"
-            rows={3}
+            rows={8}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canStart) setPhase("active"); }}
             style={{ width: "100%", padding: "0.75rem", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.04)", color: "#e2e8f0", fontSize: "0.95rem", resize: "vertical", marginBottom: "1rem", fontFamily: "inherit" }}
           />

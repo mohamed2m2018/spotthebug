@@ -95,6 +95,7 @@ export default function SolveSession({
   const lastCodeUpdateAtRef = useRef(0);
   const messagesRef = useRef<Message[]>([]);
   const problemRef = useRef<ProblemData | null>(null);
+  const explainMaterialRef = useRef("");
   const codeRef = useRef("");
   const lastSentCodeRef = useRef(""); // last code snapshot the coach received
   const sessionIdRef = useRef<string>(resumeState?.id ?? "");
@@ -156,6 +157,7 @@ export default function SolveSession({
   } = useProblemSolvingVoice({
     mode,
     getResumeContext: () => ({ code: codeRef.current, messages: messagesRef.current }),
+    getExplainMaterial: () => explainMaterialRef.current,
     onTranscript: handleTranscript,
     onProblemSolved: handleSolved,
   });
@@ -269,13 +271,23 @@ export default function SolveSession({
     // EXPLAIN mode: the learner typed a free topic — the coach just explains it.
     // No editor execution; the scratchpad is for the learner's own notes.
     if (mode === "explain") {
-      const t = (topic || "").trim() || "هذا الموضوع";
+      // The material can be LARGE (a pasted article/notes). It's baked into the
+      // token's locked system instruction (via getExplainMaterial) so the spoken
+      // first turn stays short and reliably produces audio. The panel/header show
+      // a short label only.
+      const material = (topic || "").trim();
+      explainMaterialRef.current = material;
+      const label = material
+        ? (material.split("\n")[0].slice(0, 80) + (material.length > 80 ? "…" : ""))
+        : "هذا الموضوع";
       const resuming = !!(resumeState && resumeState.messages?.length);
       const problemData: ProblemData = {
         id: `explain-${ensureSessionId()}`,
-        title: t,
-        description: "📖 المدرّس بيشرحلك الموضوع ده خطوة بخطوة. تقدر تكتب ملاحظاتك في المساحة دي.",
-        topic: t, difficulty, language: "plaintext", framework: "",
+        title: label,
+        description: material.length > 120
+          ? `📖 المدرّس بيشرحلك النص ده خطوة بخطوة:\n\n${material}`
+          : "📖 المدرّس بيشرحلك الموضوع ده خطوة بخطوة. تقدر تكتب ملاحظاتك في المساحة دي.",
+        topic: label, difficulty, language: "plaintext", framework: "",
         examples: [], starterCode: "", functionName: "", referenceSolution: "",
         hint1: "", hint2: "", hint3: "", testCases: [], grounded: false,
       };
@@ -288,9 +300,10 @@ export default function SolveSession({
             .find((x) => x && !x.startsWith("Session started"))
         : "";
       const recapNote = lastAiSaid ? ` آخر نقطة وقفنا عندها: "${lastAiSaid.slice(0, 160)}".` : "";
+      // Keep the FIRST turn short (material is in the system instruction).
       const problemContext = resuming
-        ? `CONTINUING SESSION — جلسة مكمّلة. الموضوع: **${t}**.${recapNote} كمّل من النقطة اللي بعدها، ومتبدأش من الأول.`
-        : t;
+        ? `CONTINUING SESSION — جلسة مكمّلة.${recapNote} كمّل من النقطة اللي بعدها، ومتبدأش من الأول.`
+        : "__EXPLAIN_MATERIAL__";
       try {
         await startSession(problemContext);
         setStarted(true);

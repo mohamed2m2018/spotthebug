@@ -50,6 +50,18 @@ export async function POST(req: NextRequest) {
       const selectedFiles: string[] | null = body.selectedFiles || null;
       const goal: string | undefined = body.goal;
       systemInstruction = buildGroundedInstruction(findings, selectedFiles, goal);
+    } else if (mode === "explain" && typeof body.material === "string" && body.material.trim()) {
+      // Explain mode: bake the (possibly large) material into the LOCKED system
+      // instruction. The spoken first turn stays short → audio stays reliable,
+      // while the model has the full text to teach from. Capped to stay within limits.
+      const material = body.material.slice(0, 12000);
+      systemInstruction = `${EXPLAIN_VOICE_SYSTEM_PROMPT}
+
+=== THE MATERIAL TO EXPLAIN (teach THIS to the learner, step by step, first-principles) ===
+${material}
+=== END OF MATERIAL ===
+
+Teach the material above. If it's a long text, break it into its key ideas and walk them one at a time across many short turns. If it's just a topic name, explain that topic.`;
     } else {
       systemInstruction = SYSTEM_PROMPTS[mode];
     }

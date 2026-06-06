@@ -32,6 +32,9 @@ interface UseProblemSolvingVoiceOptions {
   /** Returns the current editor code + recent transcript, replayed on a FRESH
    * reconnect (no server-side context) so the coach continues seamlessly. */
   getResumeContext?: () => { code: string; messages: { role: "ai" | "user"; text: string }[] };
+  /** Explain mode: the (possibly large) material baked into the token's locked
+   * system instruction so the spoken first turn can stay short (audio-reliable). */
+  getExplainMaterial?: () => string;
   onTranscript?: (t: VoiceTranscript) => void;
   onProblemSolved?: () => void;
   onReconnecting?: () => void;
@@ -290,7 +293,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     fullTranscriptRef.current = "";
 
     try {
-      const ephemeralToken = await fetchVoiceToken(modeRef.current);
+      const ephemeralToken = await fetchVoiceToken(modeRef.current, { material: optionsRef.current.getExplainMaterial?.() });
 
       const ai = new GoogleGenAI({
         apiKey: ephemeralToken,
@@ -604,7 +607,7 @@ export function useProblemSolvingVoice(options: UseProblemSolvingVoiceOptions = 
     };
 
     try {
-      const ephemeralToken = await fetchVoiceToken(modeRef.current, handle ? { resumptionHandle: handle } : {});
+      const ephemeralToken = await fetchVoiceToken(modeRef.current, { ...(handle ? { resumptionHandle: handle } : {}), material: optionsRef.current.getExplainMaterial?.() });
       const ai = new GoogleGenAI({ apiKey: ephemeralToken, httpOptions: { apiVersion: 'v1alpha' } });
 
       const newSession = await ai.live.connect({
