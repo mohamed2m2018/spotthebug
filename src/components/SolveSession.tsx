@@ -11,6 +11,7 @@ import { recordSession } from "@/utils/recordSession";
 import { markCovered, useCovered } from "@/lib/coverage";
 import { SQL_SCHEMA_DESCRIPTION } from "@/config/sqlSandbox";
 import { DSA_PROBLEM_DETAILS } from "@/config/syllabi";
+import AlgoVisualizer from "@/components/AlgoVisualizer";
 import { saveSession, type SavedSession } from "@/lib/sessionStore";
 import { appendJournal } from "@/lib/learningJournal";
 import type { PredefinedProblem } from "@/config/problems";
@@ -87,6 +88,8 @@ export default function SolveSession({
   const [hintLevel, setHintLevel] = useState(0);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionOutput, setExecutionOutput] = useState<string | null>(null);
+  const [visTrace, setVisTrace] = useState<import("@/lib/jsTracer").TraceResult | null>(null);
+  const [isVisualizing, setIsVisualizing] = useState(false);
   const conversationRef = useRef<HTMLDivElement>(null);
   const codeUpdateTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastCodeUpdateAtRef = useRef(0);
@@ -456,6 +459,27 @@ export default function SolveSession({
     }
   };
 
+  // Step-through visualizer: instrument + run the JS in the editor and record a
+  // trace of memory vars + loops at each line. Babel is loaded lazily (only here).
+  const visualize = async () => {
+    if (isVisualizing) return;
+    setIsVisualizing(true);
+    setExecutionOutput(null);
+    try {
+      const [{ traceJs }, BabelMod] = await Promise.all([
+        import("@/lib/jsTracer"),
+        import("@babel/standalone"),
+      ]);
+      const Babel = (BabelMod as unknown as { default?: unknown }).default ?? BabelMod;
+      const result = traceJs(Babel, codeRef.current || "");
+      setVisTrace(result);
+    } catch (e) {
+      setVisTrace({ steps: [], logs: [], truncated: false, error: (e as Error).message });
+    } finally {
+      setIsVisualizing(false);
+    }
+  };
+
   const runSql = async () => {
     if (isExecuting) return;
     setIsExecuting(true);
@@ -701,6 +725,13 @@ export default function SolveSession({
             </div>
           )}
 
+          {/* Step-through algorithm visualizer */}
+          {visTrace && (
+            <div style={{ padding: "8px 12px", borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.5)" }}>
+              <AlgoVisualizer code={codeRef.current || ""} result={visTrace} onClose={() => setVisTrace(null)} />
+            </div>
+          )}
+
           {/* Action buttons */}
           <div style={{ display: "flex", gap: "8px", padding: "8px 12px", borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.3)" }}>
             {(isCodingMode || isSqlMode) && (
@@ -715,6 +746,21 @@ export default function SolveSession({
                 }}
               >
                 {isExecuting ? "⏳ Running..." : isSqlMode ? "▶ Run Query" : "▶ Run"}
+              </button>
+            )}
+            {isCodingMode && (
+              <button
+                onClick={visualize}
+                disabled={isVisualizing}
+                title="Step through your code: watch variables & loops change line by line"
+                style={{
+                  padding: "8px 16px", borderRadius: "8px", border: "none",
+                  background: "linear-gradient(135deg, #a855f7, #7c3aed)", color: "white",
+                  fontWeight: 600, fontSize: "0.85rem", cursor: isVisualizing ? "wait" : "pointer",
+                  opacity: isVisualizing ? 0.5 : 1,
+                }}
+              >
+                {isVisualizing ? "⏳ Tracing..." : "🎞️ Visualize"}
               </button>
             )}
             {isCodingMode && (problem?.testCases?.length ?? 0) > 0 && (
