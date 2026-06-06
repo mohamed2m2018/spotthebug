@@ -41,6 +41,7 @@ export const DSA_SYLLABUS: ModeSyllabus = {
     "Jump Game (Greedy) — given max jump lengths, can you reach the last index? Pattern: furthest-reachable greedy.",
     "Single Number (Bit Manipulation) — every element appears twice except one; find it. Pattern: XOR cancellation.",
     "Merge Two Sorted Lists (Linked List) — merge two sorted linked lists into one sorted list. Pattern: merge with a dummy head.",
+    "Count Vowel Substrings of a String (Sliding Window) — count substrings made only of vowels that contain all five (a,e,i,o,u). Pattern: sliding window + counting distinct vowels. (LeetCode 2062)",
   ],
 };
 
@@ -109,6 +110,9 @@ export const DSA_PROBLEM_DETAILS: ProblemDetail[] = [
   { name: "Merge Two Sorted Lists",
     statement: "Merge two sorted linked lists into one sorted list and return its head. A node is { val, next }.\n\nExample: 1→2→4 and 1→3→4 → 1→1→2→3→4→4.",
     starter: "// Merge Two Sorted Lists\nfunction mergeTwoLists(l1, l2) {\n  // merge with a dummy head\n}\n" },
+  { name: "Count Vowel Substrings of a String",
+    statement: "Given a string `word`, return the number of substrings that consist ONLY of vowels (a, e, i, o, u) AND contain all five vowels at least once. A substring is a contiguous, non-empty slice.\n\nExample: \"aeiouu\" → 2. \"cuaieuouac\" → 7. \"unicornarihan\" → 0 (not all 5 vowels). Constraints: 1 ≤ word.length ≤ 100.",
+    starter: "// Count Vowel Substrings of a String (LeetCode 2062)\nfunction countVowelSubstrings(word) {\n  // count substrings that use ONLY vowels and contain all five (a,e,i,o,u)\n}\n\nconsole.log(countVowelSubstrings(\"aeiouu\"));     // 2\nconsole.log(countVowelSubstrings(\"cuaieuouac\")); // 7\nconsole.log(countVowelSubstrings(\"unicornarihan\")); // 0\n" },
 ];
 
 /** SQL: queries + design + concurrency/concepts. */
