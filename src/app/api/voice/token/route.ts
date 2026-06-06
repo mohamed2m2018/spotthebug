@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const mode = (["pair", "hunt", "solve", "sql", "sysdesign", "explain"].includes(body.mode)) ? body.mode : "hunt";
+    console.log(`[TOKEN] mode=${mode} materialLen=${typeof body.material === "string" ? body.material.length : "NONE"}`);
 
     // Build system instruction: use grounded version if review data is provided
     let systemInstruction: string;
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
       // Explain mode: bake the (possibly large) material into the LOCKED system
       // instruction. The spoken first turn stays short → audio stays reliable,
       // while the model has the full text to teach from. Capped to stay within limits.
-      const material = body.material.slice(0, 12000);
+      const material = body.material.slice(0, 20000);
       systemInstruction = `${EXPLAIN_VOICE_SYSTEM_PROMPT}
 
 === THE MATERIAL TO EXPLAIN (teach THIS to the learner, step by step, first-principles) ===
