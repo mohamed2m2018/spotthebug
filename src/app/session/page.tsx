@@ -180,6 +180,7 @@ export default function SessionPage() {
             </div>
           )}
           <div className={styles.modeGrid}>
+            {/* Hidden for now — focusing on the curated learning + explain modes.
             <button
               className={styles.modeCard}
               onClick={() => { setMode("pair"); setPhase("active"); }}
@@ -212,6 +213,7 @@ export default function SessionPage() {
               <span className={styles.modeLabel}>Bug Hunt</span>
               <span className={styles.modeDesc}>Find bugs in the built-in code editor with AI voice coaching</span>
             </button>
+            */}
             <button
               className={styles.modeCard}
               onClick={() => startCuratedMode("solve", DSA_SYLLABUS, "dsa")}
